@@ -7,7 +7,7 @@ Il faut Node.js 22.18 ou plus récent (la version LTS actuelle convient) : véri
 Forkez ce repo, clonez votre fork, puis lancez une seule fois, à la racine du clone (macOS, Linux, ou Windows dans PowerShell ou Git Bash, pas dans cmd) :
 
 ```bash
-git config alias.go '!f() { export GIT_ASK_YESNO=false; h=$(git rev-list --reverse main | sed -n $(expr $1 + 0)p); git clean -fdq && git switch -q -fC cours $h && git log -1 --oneline; }; f'
+git config alias.go '!f() { export GIT_ASK_YESNO=false; h=$(git rev-list --reverse main | sed -n $(expr $1 + 0)p); git clean -fdq; git switch -q -fC cours $h && git log -1 --oneline; }; f'
 ```
 
 Ensuite, pour aller au commit numéro 09 du cours (le numéro affiché sur les slides) :
