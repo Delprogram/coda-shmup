@@ -1,0 +1,28 @@
+{
+  "health": 3,
+  "spawn": {
+    "delay": 4000,
+    "maxActive": 2
+  },
+  "movement": {
+    "speed": 0.12,
+    "amplitude": 200,
+    "frequency": 0.5
+  },
+  "spreadShot": {
+    "count": 5,
+    "angle": 60,
+    "delay": 2500,
+    "bullet": {
+      "width": 14,
+      "height": 14,
+      "color": 13073919,
+      "speed": 384,
+      "damage": 1
+    }
+  },
+  "visual": {
+    "tint": 8388479,
+    "scale": 1.3
+  }
+}
