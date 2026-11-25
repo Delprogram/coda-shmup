@@ -12,6 +12,11 @@ export type LaserConfig = {
     activeMs: number;
 };
 
+// A target can hold something that stops beams (e.g. the player's deflector shield)
+export interface LaserBlocker {
+    laserBlocker(): Phaser.Geom.Line | null;
+}
+
 type Laser = LaserConfig & {
     angle: number;
     elapsedMs: number;
@@ -31,14 +36,16 @@ export default class LaserWeapon implements IComponent {
     private static readonly TELEGRAPH_BLINK_MS: number = 80;
     private static readonly DEPTH: number = 5;
     private static readonly DAMAGE: number = 2;
+    private static readonly SPARK_RADIUS: number = 34;
+    private static readonly SPARK_COLOR: number = 0x66ccff;
 
     public enabled: boolean = true;
 
     private readonly _owner: Entity;
-    private readonly _target: () => Entity;
+    private readonly _target: () => Entity & LaserBlocker;
     private _lasers: Laser[] = [];
 
-    public constructor(owner: Entity, target: () => Entity) {
+    public constructor(owner: Entity, target: () => Entity & LaserBlocker) {
         this._owner = owner;
         this._target = target;
     }
@@ -67,9 +74,10 @@ export default class LaserWeapon implements IComponent {
             if (isActive)
                 laser.angle += laser.sweepSpeed * deltaTime;
 
-            this.draw(laser, isActive);
-            if (isActive)
-                this.hitTarget(laser);
+            const end = this.beamEnd(laser, isActive);
+            this.draw(laser, isActive, end);
+            if (isActive && !end.blocked)
+                this.hitTarget(end.point);
         }
 
         const finished = this._lasers.filter(laser => laser.elapsedMs >= laser.telegraphMs + laser.activeMs);
@@ -77,12 +85,37 @@ export default class LaserWeapon implements IComponent {
         this._lasers = this._lasers.filter(laser => !finished.includes(laser));
     }
 
-    private endPoint(laser: Laser): Phaser.Math.Vector2 {
-        return new Phaser.Math.Vector2().setToPolar(laser.angle, LaserWeapon.LENGTH).add(this._owner);
+    // Where the beam stops: its full length, or the point where it hits the target's blocker
+    private beamEnd(laser: Laser, isActive: boolean): {point: Phaser.Math.Vector2, blocked: boolean} {
+        const start = new Phaser.Math.Vector2(this._owner.x, this._owner.y);
+        const fullEnd = new Phaser.Math.Vector2().setToPolar(laser.angle, LaserWeapon.LENGTH).add(start);
+        const blocker = isActive ? this._target().laserBlocker() : null;
+        if (!blocker)
+            return {point: fullEnd, blocked: false};
+
+        const hit = LaserWeapon.segmentIntersection(start, fullEnd, blocker.getPointA(), blocker.getPointB());
+        return hit ? {point: hit, blocked: true} : {point: fullEnd, blocked: false};
     }
 
-    private draw(laser: Laser, isActive: boolean) {
-        const end = this.endPoint(laser);
+    public static segmentIntersection(p1: Phaser.Math.Vector2, p2: Phaser.Math.Vector2,
+                                      q1: Phaser.Math.Vector2, q2: Phaser.Math.Vector2): Phaser.Math.Vector2 | null {
+        const r = p2.clone().subtract(p1);
+        const s = q2.clone().subtract(q1);
+        const denominator: number = r.cross(s);
+        if (Math.abs(denominator) < Number.EPSILON)
+            return null;
+
+        const qp = q1.clone().subtract(p1);
+        const t: number = qp.cross(s) / denominator;
+        const u: number = qp.cross(r) / denominator;
+        if (t < 0 || t > 1 || u < 0 || u > 1)
+            return null;
+
+        return p1.clone().add(r.scale(t));
+    }
+
+    private draw(laser: Laser, isActive: boolean, beamEnd: {point: Phaser.Math.Vector2, blocked: boolean}) {
+        const end = beamEnd.point;
         const g = laser.graphics.clear();
 
         if (!isActive) {
@@ -97,9 +130,14 @@ export default class LaserWeapon implements IComponent {
         g.lineBetween(this._owner.x, this._owner.y, end.x, end.y);
         g.lineStyle(LaserWeapon.CORE_WIDTH, LaserWeapon.CORE_COLOR, 0.95);
         g.lineBetween(this._owner.x, this._owner.y, end.x, end.y);
+
+        if (beamEnd.blocked) {
+            g.fillStyle(LaserWeapon.SPARK_COLOR, 0.8);
+            g.fillCircle(end.x, end.y, LaserWeapon.SPARK_RADIUS * Phaser.Math.FloatBetween(0.7, 1.2));
+        }
     }
 
-    private hitTarget(laser: Laser) {
+    private hitTarget(end: Phaser.Math.Vector2) {
         const target = this._target();
         // A disabled body means the target is invincible (hit, dash or shield) or dead
         if (!target.active || !target.arcadeBody.enable)
@@ -107,7 +145,7 @@ export default class LaserWeapon implements IComponent {
 
         // Distance from the target to the beam segment (projection clamped to the segment, so nothing behind the owner)
         const start = new Phaser.Math.Vector2(this._owner.x, this._owner.y);
-        const direction = this.endPoint(laser).subtract(start);
+        const direction = end.clone().subtract(start);
         const t: number = Phaser.Math.Clamp(
             new Phaser.Math.Vector2(target.x, target.y).subtract(start).dot(direction) / direction.lengthSq(), 0, 1);
         const distance: number = start.add(direction.scale(t)).distance(target);

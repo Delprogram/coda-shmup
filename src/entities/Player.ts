@@ -5,10 +5,11 @@ import Entity from './Entity.ts';
 import Health from "../components/Health.ts";
 import Movement from "../components/Movement.ts";
 import Skills, {SkillId} from "../components/Skills.ts";
+import {LaserBlocker} from "../components/LaserWeapon.ts";
 import Weapon from "../components/Weapon.ts";
 import RegistryConstants from "../RegistryConstants.ts";
 
-export default class Player extends Entity {
+export default class Player extends Entity implements LaserBlocker {
     private readonly _bulletData: BulletData = {
         width: 12,
         height: 4,
@@ -50,6 +51,15 @@ export default class Player extends Entity {
     private static readonly OVERDRIVE_SPREAD_DEG: number = 40;
     private static readonly OVERDRIVE_TINT: number = 0xffb000;
 
+    // Deflector: plate in front of the ship (toward the aim) that blocks laser beams, given by a laser shield pickup
+    private static readonly DEFLECTOR_MS: number = 8000;
+    private static readonly DEFLECTOR_DISTANCE: number = 95;
+    private static readonly DEFLECTOR_LENGTH: number = 240;
+    private static readonly DEFLECTOR_THICKNESS: number = 18;
+    private static readonly DEFLECTOR_COLOR: number = 0x66ccff;
+    private static readonly DEFLECTOR_WARNING_MS: number = 1500;
+    private static readonly DEFLECTOR_BLINK_MS: number = 100;
+
     private readonly _cursorKeys: Phaser.Types.Input.Keyboard.CursorKeys;
     // WASD (QWERTY) and ZQSD (AZERTY) both work, like in most FPS games
     private readonly _moveKeys: Record<'up' | 'down' | 'left' | 'right', Input.Keyboard.Key[]>;
@@ -64,6 +74,8 @@ export default class Player extends Entity {
     private _invincibleUntil: number = 0;
     private _overdriveUntil: number = 0;
     private _shieldBubble: Phaser.GameObjects.Arc | null = null;
+    private _deflector: Phaser.GameObjects.Rectangle;
+    private _deflectorUntil: number = 0;
 
     constructor(scene: Scene, x: number, y: number) {
         super(scene, x, y, 'sprites');
@@ -107,6 +119,9 @@ export default class Player extends Entity {
         this.addComponent(new Weapon(bulletsGroup, this._bulletData));
         this.addComponent(new Skills());
 
+        this._deflector = this.scene.add.rectangle(this.x, this.y, Player.DEFLECTOR_THICKNESS, Player.DEFLECTOR_LENGTH,
+            Player.DEFLECTOR_COLOR, 0.85).setStrokeStyle(4, 0xffffff, 0.9).setVisible(false);
+
         this.angle = -90;
 
         this.selectPlayerShip(1);
@@ -121,6 +136,13 @@ export default class Player extends Entity {
             this._lastHealth = current;
             if (wasHit && current > 0)
                 this.startInvincibility();
+        });
+
+        // preUpdate stops once the player is dead: hide what follows the ship
+        this.getComponent(Health)?.once(Health.DEATH_EVENT, () => {
+            this._deflectorUntil = 0;
+            this._deflector.setVisible(false);
+            this._shieldBubble?.setVisible(false);
         });
 
         this.getComponent(Skills)?.on(Skills.USED_EVENT, (id: SkillId) => {
@@ -160,6 +182,36 @@ export default class Player extends Entity {
             if (this._shieldBubble === bubble)
                 this._shieldBubble = null;
         });
+    }
+
+    public activateDeflector() {
+        this._deflectorUntil = this.scene.time.now + Player.DEFLECTOR_MS;
+    }
+
+    public laserBlocker(): Phaser.Geom.Line | null {
+        if (!this.active || this.scene.time.now >= this._deflectorUntil)
+            return null;
+
+        // Segment perpendicular to the aim, centered in front of the ship
+        const forward = new Phaser.Math.Vector2().setToPolar(this.rotation, Player.DEFLECTOR_DISTANCE);
+        const half = new Phaser.Math.Vector2().setToPolar(this.rotation + Math.PI / 2, Player.DEFLECTOR_LENGTH / 2);
+        const centerX: number = this.x + forward.x;
+        const centerY: number = this.y + forward.y;
+        return new Phaser.Geom.Line(centerX - half.x, centerY - half.y, centerX + half.x, centerY + half.y);
+    }
+
+    private updateDeflector(now: number) {
+        const remainingMs: number = this._deflectorUntil - now;
+        this._deflector.setVisible(remainingMs > 0);
+        if (remainingMs <= 0)
+            return;
+
+        const forward = new Phaser.Math.Vector2().setToPolar(this.rotation, Player.DEFLECTOR_DISTANCE);
+        this._deflector.setPosition(this.x + forward.x, this.y + forward.y).setRotation(this.rotation);
+        // Blink at the end to warn that it is about to run out
+        const blinkOff: boolean = remainingMs < Player.DEFLECTOR_WARNING_MS
+            && Math.floor(remainingMs / Player.DEFLECTOR_BLINK_MS) % 2 === 1;
+        this._deflector.setAlpha(blinkOff ? 0.3 : 1);
     }
 
     private activateOverdrive() {
@@ -246,6 +298,7 @@ export default class Player extends Entity {
         }
 
         this._shieldBubble?.setPosition(this.x, this.y);
+        this.updateDeflector(now);
 
         // Press space or hold the left mouse button (or a finger) to shoot toward the mouse
         const isShooting: boolean = pointer.isDown && !pointer.rightButtonDown();

@@ -1,7 +1,7 @@
 import type {BulletData} from '../gameData/BulletData.ts';
 import Entity from './Entity.ts';
 import Health from "../components/Health.ts";
-import LaserWeapon from "../components/LaserWeapon.ts";
+import LaserWeapon, {LaserBlocker} from "../components/LaserWeapon.ts";
 import Movement from "../components/Movement.ts";
 import Weapon from "../components/Weapon.ts";
 
@@ -69,7 +69,7 @@ export default class Boss extends Entity {
         damage: 1,
     };
 
-    private _target: Entity;
+    private _target: Entity & LaserBlocker;
     private _level: number = 1;
     private _attackTimer: Phaser.Time.TimerEvent | null = null;
     private _attackIndex: number = 0;
@@ -79,6 +79,10 @@ export default class Boss extends Entity {
 
     public get title(): string {
         return this._type.title;
+    }
+
+    public get hasLasers(): boolean {
+        return this._type.patterns.some(pattern => pattern.toLowerCase().includes('laser'));
     }
 
     public init(bulletsGroup: Phaser.Physics.Arcade.Group) {
@@ -106,7 +110,7 @@ export default class Boss extends Entity {
         });
     }
 
-    public enable(level: number, target: Entity) {
+    public enable(level: number, target: Entity & LaserBlocker) {
         this._level = level;
         this._target = target;
         this._attackIndex = 0;

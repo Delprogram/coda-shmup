@@ -5,7 +5,7 @@ import Boss from "../entities/Boss.ts";
 import Bullet from "../entities/Bullet.ts";
 import Enemy from "../entities/Enemy.ts";
 import Entity from "../entities/Entity.ts";
-import HealthPickup from "../entities/HealthPickup.ts";
+import Pickup from "../entities/Pickup.ts";
 import SineEnemy from "../entities/SineEnemy.ts";
 import {SineEnemyData} from "../gameData/SineEnemyData.ts";
 import Player from "../entities/Player.ts";
@@ -33,7 +33,7 @@ export default class EntityManager extends Plugins.ScenePlugin {
     private _enemyBullets: Physics.Arcade.Group;
     private _sineEnemies: Physics.Arcade.Group;
     private _spawnTimers: Phaser.Time.TimerEvent[] = [];
-    private _healthPickups: Physics.Arcade.Group;
+    private _pickups: Physics.Arcade.Group;
     private _bosses: Physics.Arcade.Group;
 
     // Levels: kill enough enemies to make the boss appear; beating it starts the next, harder level
@@ -45,6 +45,12 @@ export default class EntityManager extends Plugins.ScenePlugin {
     private static readonly BOSS_DROP_SPREAD: number = 120;
     private static readonly BOSS_CONTACT_DAMAGE: number = 2;
     private static readonly PLAYER_SPAWN_BOTTOM_OFFSET: number = 400;
+    private static readonly MAX_ACTIVE_ENEMIES: number = 8;
+
+    // Laser shield pickups appear at random places while a laser boss is alive
+    private static readonly SHIELD_PICKUP_INTERVAL_MS: number = 4000;
+    private static readonly MAX_SHIELD_PICKUPS: number = 2;
+    private static readonly SHIELD_PICKUP_MARGIN: number = 250;
     private static readonly BOSS_ULTIMATE_KILLS: number = 15;
     private static readonly SPAWN_SPEEDUP_PER_LEVEL: number = 0.3;
 
@@ -56,6 +62,7 @@ export default class EntityManager extends Plugins.ScenePlugin {
 
     private _levelKills: number = 0;
     private _bossFight: boolean = false;
+    private _shieldPickupTimer: Phaser.Time.TimerEvent | null = null;
 
     // Chance for a destroyed enemy to drop a health pickup: tougher enemies drop more often
     private static readonly ENEMY_DROP_CHANCE: number = 0.08;
@@ -127,6 +134,7 @@ export default class EntityManager extends Plugins.ScenePlugin {
         this._comboResetTimer = null;
         this._levelKills = 0;
         this._bossFight = false;
+        this._shieldPickupTimer = null;
 
         // Spawn enemies indefinitely
         this._spawnTimers.push(this.scene!.time.addEvent({
@@ -146,12 +154,12 @@ export default class EntityManager extends Plugins.ScenePlugin {
             }
         });
 
-        this._healthPickups = this.scene!.physics.add.group({
-            classType: HealthPickup,
+        this._pickups = this.scene!.physics.add.group({
+            classType: Pickup,
             defaultKey: 'sprites',
             defaultFrame: 'playerLife1_blue',
             createCallback: (pickup) => {
-                (pickup as HealthPickup).init();
+                (pickup as Pickup).init();
             }
         });
 
@@ -220,9 +228,12 @@ export default class EntityManager extends Plugins.ScenePlugin {
             this.scene?.cameras.main.shake(150, 0.03);
         });
 
-        this.scene!.physics.add.overlap(this._player, this._healthPickups, (player, pickup) => {
-            (pickup as HealthPickup).disable();
-            (player as Player).getComponent(Health)?.heal(HealthPickup.HEAL_AMOUNT);
+        this.scene!.physics.add.overlap(this._player, this._pickups, (player, pickup) => {
+            (pickup as Pickup).disable();
+            if ((pickup as Pickup).kind === 'health')
+                (player as Player).getComponent(Health)?.heal(Pickup.HEAL_AMOUNT);
+            else
+                (player as Player).activateDeflector();
         });
 
         console.log("[EntityManager] Group collisions initialized");
@@ -271,8 +282,22 @@ export default class EntityManager extends Plugins.ScenePlugin {
         scene.cameras.main.shake(150, 0.01);
     }
 
+    private spawnShieldPickup() {
+        const activeShields: number = (this._pickups.getMatching('active', true) as Pickup[])
+            .filter(pickup => pickup.kind === 'laserShield').length;
+        if (activeShields >= EntityManager.MAX_SHIELD_PICKUPS)
+            return;
+
+        const camera = this.scene!.cameras.main;
+        const margin: number = EntityManager.SHIELD_PICKUP_MARGIN;
+        // Lower part of the screen: the boss hovers at the top
+        const x: number = Phaser.Math.Between(margin, camera.width - margin);
+        const y: number = Phaser.Math.Between(camera.height / 2, camera.height - margin);
+        (this._pickups.get() as Pickup | null)?.enable(x, y, 'laserShield');
+    }
+
     private dropHealthPickup(x: number, y: number) {
-        (this._healthPickups.get() as HealthPickup | null)?.enable(x, y);
+        (this._pickups.get() as Pickup | null)?.enable(x, y, 'health');
     }
 
     private currentLevel(): number {
@@ -295,6 +320,16 @@ export default class EntityManager extends Plugins.ScenePlugin {
 
             boss.enable(this.currentLevel(), this._player);
             this.game!.events.emit(GameConstants.Events.BOSS_SPAWNED_EVENT, boss);
+
+            if (boss.hasLasers) {
+                this.spawnShieldPickup();
+                this._shieldPickupTimer = this.scene!.time.addEvent({
+                    delay: EntityManager.SHIELD_PICKUP_INTERVAL_MS,
+                    callback: this.spawnShieldPickup,
+                    callbackScope: this,
+                    loop: true
+                });
+            }
         });
     }
 
@@ -313,6 +348,8 @@ export default class EntityManager extends Plugins.ScenePlugin {
             this.dropHealthPickup(boss.x + Phaser.Math.Between(-spread, spread), boss.y + Phaser.Math.Between(-spread, spread));
         }
 
+        this._shieldPickupTimer?.remove();
+        this._shieldPickupTimer = null;
         this._levelKills = 0;
         this._bossFight = false;
         scene.registry.set(RegistryConstants.Keys.LEVEL, level + 1);
@@ -369,7 +406,7 @@ export default class EntityManager extends Plugins.ScenePlugin {
     }
 
     private spawnEnemy() {
-        if (this._enemies.countActive(true) >= 5) {
+        if (this._enemies.countActive(true) >= EntityManager.MAX_ACTIVE_ENEMIES) {
             return;
         }
 
