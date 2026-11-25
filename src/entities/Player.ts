@@ -2,6 +2,7 @@ import {Input, Scene} from "phaser";
 import {PlayerShipData, PlayerShipsData} from "../gameData/PlayerShipsData.ts";
 import type {BulletData} from "../gameData/BulletData.ts";
 import Entity from './Entity.ts';
+import type Bullet from "./Bullet.ts";
 import Health from "../components/Health.ts";
 import Movement from "../components/Movement.ts";
 import Skills, {SkillId} from "../components/Skills.ts";
@@ -32,15 +33,6 @@ export default class Player extends Entity implements LaserBlocker {
     private static readonly INVINCIBILITY_MS: number = 900;
     private static readonly BLINK_MS: number = 90;
 
-    // Dash: short invincible burst in the move direction (or toward the aim when standing still)
-    private static readonly DASH_MS: number = 160;
-    private static readonly DASH_SPEED_FACTOR: number = 4;
-    private static readonly DASH_COOLDOWN_MS: number = 900;
-    private static readonly DASH_GHOST_ALPHA: number = 0.5;
-    private static readonly DASH_GHOST_FADE_MS: number = 220;
-    private static readonly DASH_GHOST_TINT: number = 0x66ccff;
-    private static readonly MIN_MOVE_FOR_DASH: number = 0.1;
-
     // Skills
     private static readonly SHIELD_MS: number = 3000;
     private static readonly SHIELD_RADIUS: number = 90;
@@ -50,8 +42,13 @@ export default class Player extends Entity implements LaserBlocker {
     private static readonly OVERDRIVE_BULLETS: number = 7;
     private static readonly OVERDRIVE_SPREAD_DEG: number = 40;
     private static readonly OVERDRIVE_TINT: number = 0xffb000;
+    // Barrier: field around the ship that destroys every enemy bullet entering it
+    private static readonly BARRIER_MS: number = 5000;
+    private static readonly BARRIER_RADIUS: number = 320;
+    private static readonly BARRIER_COLOR: number = 0x66ffcc;
+    private static readonly BARRIER_PULSE_MS: number = 300;
 
-    // Laser gun: rare pickup during laser boss fights, the ship fires piercing beams instead of bullets
+    // Laser gun: rare pickup during laser boss fights, right click fires piercing beams
     private static readonly LASER_GUN_MS: number = 6000;
     private static readonly LASER_GUN_RATE_OF_FIRE_S: number = 0.08;
     // Slightly longer than the rate of fire so consecutive beams look like one continuous ray
@@ -70,16 +67,13 @@ export default class Player extends Entity implements LaserBlocker {
     private static readonly DEFLECTOR_BLINK_MS: number = 100;
 
     private readonly _cursorKeys: Phaser.Types.Input.Keyboard.CursorKeys;
-    // WASD (QWERTY) and ZQSD (AZERTY) both work, like in most FPS games
+    // ZQSD (AZERTY), W/S/D (QWERTY) and arrows. A is not a move key: it triggers the barrier
     private readonly _moveKeys: Record<'up' | 'down' | 'left' | 'right', Input.Keyboard.Key[]>;
     private _playerShipData: PlayerShipData;
     private _rateOfFire: number;
     private _lastShotTime: number;
     private _lastHealth: number;
     private readonly _smoothedDirection: Phaser.Math.Vector2 = new Phaser.Math.Vector2();
-    private readonly _dashDirection: Phaser.Math.Vector2 = new Phaser.Math.Vector2();
-    private _dashEndTime: number = 0;
-    private _nextDashTime: number = 0;
     private _invincibleUntil: number = 0;
     private _overdriveUntil: number = 0;
     private _shieldBubble: Phaser.GameObjects.Arc | null = null;
@@ -87,6 +81,10 @@ export default class Player extends Entity implements LaserBlocker {
     private _deflectorUntil: number = 0;
     private _laserGunUntil: number = 0;
     private _laserTargets: () => Entity[] = () => [];
+    private _lastLaserTime: number = 0;
+    private _barrier: Phaser.GameObjects.Arc;
+    private _barrierUntil: number = 0;
+    private _enemyBullets: () => Bullet[] = () => [];
 
     constructor(scene: Scene, x: number, y: number) {
         super(scene, x, y, 'sprites');
@@ -100,15 +98,14 @@ export default class Player extends Entity implements LaserBlocker {
             this._moveKeys = {
                 up: [...keys(KeyCodes.W, KeyCodes.Z), this._cursorKeys.up],
                 down: [...keys(KeyCodes.S), this._cursorKeys.down],
-                left: [...keys(KeyCodes.A, KeyCodes.Q), this._cursorKeys.left],
+                left: [...keys(KeyCodes.Q), this._cursorKeys.left],
                 right: [...keys(KeyCodes.D), this._cursorKeys.right],
             };
 
-            this.scene.input.keyboard.addKey(KeyCodes.SHIFT).on('down', () => this.tryDash());
-            this.scene.input.keyboard.addKey(KeyCodes.E).on('down', () => this.tryDash());
             const useSkill = (id: SkillId) => this.getComponent(Skills)?.tryUse(id, this.scene.time.now);
             this.scene.input.keyboard.addKey(KeyCodes.F).on('down', () => useSkill('shockwave'));
             this.scene.input.keyboard.addKey(KeyCodes.C).on('down', () => useSkill('shield'));
+            this.scene.input.keyboard.addKey(KeyCodes.A).on('down', () => useSkill('barrier'));
             this.scene.input.keyboard.addKey(KeyCodes.X).on('down', () => useSkill('overdrive'));
 
             this.scene.input.keyboard.addKey(Input.Keyboard.KeyCodes.ONE).on('down', () => this.selectPlayerShip(1));
@@ -116,23 +113,28 @@ export default class Player extends Entity implements LaserBlocker {
             this.scene.input.keyboard.addKey(Input.Keyboard.KeyCodes.THREE).on('down', () => this.selectPlayerShip(3));
         }
 
-        // Right click dashes, so the browser menu must not open
+        // Right click fires the laser gun, so the browser menu must not open
         this.scene.input.mouse?.disableContextMenu();
-        this.scene.input.on(Input.Events.POINTER_DOWN, (pointer: Input.Pointer) => {
-            if (pointer.rightButtonDown())
-                this.tryDash();
-        });
     }
 
     public init(bulletsGroup: Phaser.Physics.Arcade.Group) {
         this.addComponent(new Health(Player.MAX_HEALTH, this));
         this.addComponent(new Movement());
         this.addComponent(new Weapon(bulletsGroup, this._bulletData));
-        this.addComponent(new Skills());
+        this.addComponent(new Skills(this.scene.time.now));
         this.addComponent(new LaserWeapon(this, () => this._laserTargets(), Player.LASER_GUN_STYLE));
 
         this._deflector = this.scene.add.rectangle(this.x, this.y, Player.DEFLECTOR_THICKNESS, Player.DEFLECTOR_LENGTH,
             Player.DEFLECTOR_COLOR, 0.85).setStrokeStyle(4, 0xffffff, 0.9).setVisible(false);
+        this._barrier = this.scene.add.circle(this.x, this.y, Player.BARRIER_RADIUS, Player.BARRIER_COLOR, 0.08)
+            .setStrokeStyle(8, Player.BARRIER_COLOR, 0.8).setVisible(false);
+        this.scene.tweens.add({
+            targets: this._barrier,
+            alpha: {from: 1, to: 0.5},
+            duration: Player.BARRIER_PULSE_MS,
+            yoyo: true,
+            repeat: -1
+        });
 
         this.angle = -90;
 
@@ -155,6 +157,8 @@ export default class Player extends Entity implements LaserBlocker {
             this._deflectorUntil = 0;
             this._deflector.setVisible(false);
             this._shieldBubble?.setVisible(false);
+            this._barrierUntil = 0;
+            this._barrier.setVisible(false);
             this._laserGunUntil = 0;
             this.getComponent(LaserWeapon)?.clear();
         });
@@ -162,6 +166,8 @@ export default class Player extends Entity implements LaserBlocker {
         this.getComponent(Skills)?.on(Skills.USED_EVENT, (id: SkillId) => {
             if (id === 'shield')
                 this.activateShield();
+            else if (id === 'barrier')
+                this._barrierUntil = this.scene.time.now + Player.BARRIER_MS;
             else if (id === 'overdrive')
                 this.activateOverdrive();
         });
@@ -228,9 +234,24 @@ export default class Player extends Entity implements LaserBlocker {
         this._deflector.setAlpha(blinkOff ? 0.3 : 1);
     }
 
-    // What the laser gun can hit, given by the EntityManager which owns the enemy groups
+    // What the laser gun can hit and what the barrier destroys, given by the EntityManager which owns the groups
     public setLaserTargets(targets: () => Entity[]) {
         this._laserTargets = targets;
+    }
+
+    public setEnemyBullets(bullets: () => Bullet[]) {
+        this._enemyBullets = bullets;
+    }
+
+    private updateBarrier(now: number) {
+        const isActive: boolean = now < this._barrierUntil;
+        this._barrier.setVisible(isActive).setPosition(this.x, this.y);
+        if (!isActive)
+            return;
+
+        this._enemyBullets()
+            .filter(bullet => Phaser.Math.Distance.Between(this.x, this.y, bullet.x, bullet.y) <= Player.BARRIER_RADIUS)
+            .forEach(bullet => bullet.disable());
     }
 
     public activateLaserGun() {
@@ -250,32 +271,6 @@ export default class Player extends Entity implements LaserBlocker {
 
     private extendInvincibility(durationMs: number) {
         this._invincibleUntil = Math.max(this._invincibleUntil, this.scene.time.now + durationMs);
-    }
-
-    private tryDash() {
-        const now: number = this.scene.time.now;
-        if (!this.active || now < this._nextDashTime)
-            return;
-
-        if (this._smoothedDirection.length() > Player.MIN_MOVE_FOR_DASH)
-            this._dashDirection.copy(this._smoothedDirection).normalize();
-        else
-            this._dashDirection.setToPolar(this.rotation);
-
-        this._dashEndTime = now + Player.DASH_MS;
-        this._nextDashTime = now + Player.DASH_COOLDOWN_MS;
-        this.extendInvincibility(Player.DASH_MS);
-    }
-
-    private spawnDashGhost() {
-        const ghost = this.scene.add.image(this.x, this.y, this.texture.key, this.frame.name)
-            .setRotation(this.rotation).setAlpha(Player.DASH_GHOST_ALPHA).setTint(Player.DASH_GHOST_TINT);
-        this.scene.tweens.add({
-            targets: ghost,
-            alpha: 0,
-            duration: Player.DASH_GHOST_FADE_MS,
-            onComplete: () => ghost.destroy()
-        });
     }
 
     public selectPlayerShip(playerShipDataId: number) {
@@ -307,12 +302,6 @@ export default class Player extends Entity implements LaserBlocker {
         movement?.moveHorizontally(this, this._smoothedDirection.x * deltaTime);
         movement?.moveVertically(this, this._smoothedDirection.y * deltaTime);
 
-        if (now < this._dashEndTime) {
-            movement?.moveHorizontally(this, this._dashDirection.x * Player.DASH_SPEED_FACTOR * deltaTime);
-            movement?.moveVertically(this, this._dashDirection.y * Player.DASH_SPEED_FACTOR * deltaTime);
-            this.spawnDashGhost();
-        }
-
         // Stop player from going offscreen
         const camera = this.scene.cameras.main;
         this.x = Phaser.Math.Clamp(this.x, this.displayWidth / 2, camera.width - this.displayWidth / 2);
@@ -327,21 +316,25 @@ export default class Player extends Entity implements LaserBlocker {
 
         this._shieldBubble?.setPosition(this.x, this.y);
         this.updateDeflector(now);
+        this.updateBarrier(now);
         this.getComponent(LaserWeapon)?.update(deltaTime);
 
-        // Press space or hold the left mouse button (or a finger) to shoot toward the mouse
+        // Hold the right mouse button to fire the laser gun (only while the pickup is active)
+        const hasLaserGun: boolean = now < this._laserGunUntil;
+        if (hasLaserGun && pointer.rightButtonDown()
+            && timeSinceLaunch - this._lastLaserTime > Player.LASER_GUN_RATE_OF_FIRE_S * 1000) {
+            this.getComponent(LaserWeapon)?.fire(this.rotation,
+                {angleOffset: 0, sweepSpeed: 0, telegraphMs: 0, activeMs: Player.LASER_GUN_BEAM_MS});
+            this.scene.sound.play('sfx_laser1', {volume: Player.LASER_GUN_SOUND_VOLUME});
+            this._lastLaserTime = timeSinceLaunch;
+        }
+
+        // Press space or hold the left mouse button (or a finger) to shoot bullets toward the mouse
         const isShooting: boolean = pointer.isDown && !pointer.rightButtonDown();
         const isOverdrive: boolean = now < this._overdriveUntil;
-        const hasLaserGun: boolean = now < this._laserGunUntil;
-        const rateOfFire: number = hasLaserGun ? Player.LASER_GUN_RATE_OF_FIRE_S
-            : isOverdrive ? Player.OVERDRIVE_RATE_OF_FIRE_S : this._rateOfFire;
+        const rateOfFire: number = isOverdrive ? Player.OVERDRIVE_RATE_OF_FIRE_S : this._rateOfFire;
         if (this._cursorKeys.space.isDown || isShooting) {
-            if (hasLaserGun && timeSinceLaunch - this._lastShotTime > rateOfFire * 1000) {
-                this.getComponent(LaserWeapon)?.fire(this.rotation,
-                    {angleOffset: 0, sweepSpeed: 0, telegraphMs: 0, activeMs: Player.LASER_GUN_BEAM_MS});
-                this.scene.sound.play('sfx_laser1', {volume: Player.LASER_GUN_SOUND_VOLUME});
-                this._lastShotTime = timeSinceLaunch;
-            } else if (timeSinceLaunch - this._lastShotTime > rateOfFire * 1000) {
+            if (timeSinceLaunch - this._lastShotTime > rateOfFire * 1000) {
                 const score: number = Number(this.scene.registry.get(RegistryConstants.Keys.PLAYER_SCORE) ?? 0);
                 const bulletCount: number = isOverdrive ? Player.OVERDRIVE_BULLETS
                     : Math.min(1 + Math.floor(score / Player.SCORE_PER_UPGRADE), Player.MAX_BULLETS);

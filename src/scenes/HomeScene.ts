@@ -49,7 +49,7 @@ export default class HomeScene extends Phaser.Scene {
             {fontSize: '72px', color: '#fff', fontFamily: 'future'}).setOrigin(0.5);
         this.add.text(this.scale.width / 2, titleY + 72, 'Press SPACE or CLICK to start',
             {fontSize: '32px', color: '#fff'}).setOrigin(0.5);
-        this.add.text(this.scale.width / 2, titleY + 128, 'ZQSD / WASD to move - aim and shoot with the mouse\nSHIFT / E / RIGHT CLICK to dash\nF shockwave - C shield - X overdrive (charged by kills)',
+        this.add.text(this.scale.width / 2, titleY + 128, 'ZQSD or arrows to move - aim with the mouse, LEFT CLICK to shoot\nRIGHT CLICK fires the laser gun (laser boss pickup)\nF shockwave - C shield - A barrier (when charged) - X overdrive (charged by kills)',
             {fontSize: '28px', color: '#aaa', align: 'center', lineSpacing: 12,
                 wordWrap: {width: this.scale.width - 80}}).setOrigin(0.5, 0);
 

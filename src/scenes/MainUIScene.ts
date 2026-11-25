@@ -180,13 +180,12 @@ export default class MainUIScene extends Scene {
     }
 
     private createSkillBar() {
-        // Slot order matches Skills: shockwave, shield, overdrive (ultimate)
-        const labels = [['F', 'SHOCKWAVE'], ['C', 'SHIELD'], ['X', 'OVERDRIVE']];
         const size: number = MainUIScene.SKILL_SLOT_SIZE;
         // Bottom-left corner, so it hides as little of the play area as possible
         const y: number = this.scale.height - MainUIScene.SKILL_BAR_MARGIN - size / 2;
 
-        this._skillSlots = labels.map(([key, name], i) => {
+        // Same order as Skills.states(), which update() relies on
+        this._skillSlots = Skills.SKILLS.map(({key, name}, i) => {
             const x: number = MainUIScene.SKILL_BAR_MARGIN + size / 2 + i * (size + MainUIScene.SKILL_SLOT_GAP);
             const border = this.add.rectangle(x, y, size, size, 0x000000, 0.5).setStrokeStyle(6, 0xffffff, 0.4);
             // Dark overlay that shrinks from the top while the skill recharges

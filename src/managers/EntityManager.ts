@@ -185,6 +185,7 @@ export default class EntityManager extends Plugins.ScenePlugin {
 
         this._player.setLaserTargets(() => [this._enemies, this._sineEnemies, this._bosses]
             .flatMap(group => group.getMatching('active', true) as Entity[]));
+        this._player.setEnemyBullets(() => this._enemyBullets.getMatching('active', true) as Bullet[]);
 
         console.log("[EntityManager] Enemies initialized");
 

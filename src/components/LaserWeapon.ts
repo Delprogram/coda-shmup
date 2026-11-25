@@ -158,7 +158,7 @@ export default class LaserWeapon implements IComponent {
         const direction = end.clone().subtract(start);
 
         for (const target of this._targets()) {
-            // A disabled body means the target is invincible (hit, dash or shield) or dead
+            // A disabled body means the target is invincible (hit or shield) or dead
             if (!target.active || !target.arcadeBody.enable || laser.hitTargets.has(target))
                 continue;
 

@@ -1,6 +1,6 @@
 import IComponent from "./IComponent.ts";
 
-export type SkillId = 'shockwave' | 'shield' | 'overdrive';
+export type SkillId = 'shockwave' | 'shield' | 'barrier' | 'overdrive';
 
 export type SkillState = {
     id: SkillId;
@@ -10,24 +10,28 @@ export type SkillState = {
     readiness: number;
 };
 
-type Skill = {
+export type Skill = {
     id: SkillId;
     key: string;
     name: string;
     // Cooldown skills recharge with time; the ultimate recharges with kills instead
     cooldownMs: number;
     killsRequired: number;
+    // False: the charge bar starts empty and fills up during the game
+    startsReady: boolean;
 };
 
-// Player abilities, Valorant style: two skills on cooldown and an ultimate charged by kills.
+// Player abilities, Valorant style: skills on cooldown and an ultimate charged by kills.
 // Emits USED_EVENT so the rest of the logic (e.g. EntityManager for the shockwave) can apply the effect.
 export default class Skills extends Phaser.Events.EventEmitter implements IComponent {
     public static readonly USED_EVENT: string = 'skillUsed';
 
-    private static readonly SKILLS: Skill[] = [
-        {id: 'shockwave', key: 'F', name: 'SHOCKWAVE', cooldownMs: 8000, killsRequired: 0},
-        {id: 'shield', key: 'C', name: 'SHIELD', cooldownMs: 12000, killsRequired: 0},
-        {id: 'overdrive', key: 'X', name: 'OVERDRIVE', cooldownMs: 0, killsRequired: 15},
+    // Also the order of the skill bar in the UI
+    public static readonly SKILLS: readonly Skill[] = [
+        {id: 'shockwave', key: 'F', name: 'SHOCKWAVE', cooldownMs: 8000, killsRequired: 0, startsReady: true},
+        {id: 'shield', key: 'C', name: 'SHIELD', cooldownMs: 12000, killsRequired: 0, startsReady: true},
+        {id: 'barrier', key: 'A', name: 'BARRIER', cooldownMs: 20000, killsRequired: 0, startsReady: false},
+        {id: 'overdrive', key: 'X', name: 'OVERDRIVE', cooldownMs: 0, killsRequired: 15, startsReady: false},
     ];
 
     public enabled: boolean = true;
@@ -35,10 +39,9 @@ export default class Skills extends Phaser.Events.EventEmitter implements ICompo
     private readonly _lastUseTime: Map<SkillId, number> = new Map();
     private _ultimateKills: number = 0;
 
-    public constructor() {
+    public constructor(now: number) {
         super();
-        // Cooldown skills start ready
-        Skills.SKILLS.forEach(skill => this._lastUseTime.set(skill.id, -skill.cooldownMs));
+        Skills.SKILLS.forEach(skill => this._lastUseTime.set(skill.id, skill.startsReady ? now - skill.cooldownMs : now));
     }
 
     public addKill() {
