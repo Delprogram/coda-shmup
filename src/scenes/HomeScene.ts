@@ -46,8 +46,9 @@ export default class HomeScene extends Phaser.Scene {
             {fontSize: '72px', color: '#fff', fontFamily: 'future'}).setOrigin(0.5);
         this.add.text(this.scale.width / 2, this.scale.width / 2 + 72, 'Press SPACE or CLICK to start',
             {fontSize: '32px', color: '#fff'}).setOrigin(0.5);
-        this.add.text(this.scale.width / 2, this.scale.width / 2 + 128, 'ZQSD / WASD to move - aim and shoot with the mouse\nSHIFT / E / RIGHT CLICK to dash',
-            {fontSize: '28px', color: '#aaa', align: 'center'}).setOrigin(0.5, 0);
+        this.add.text(this.scale.width / 2, this.scale.width / 2 + 128, 'ZQSD / WASD to move - aim and shoot with the mouse\nSHIFT / E / RIGHT CLICK to dash\nF shockwave - C shield - X overdrive (charged by kills)',
+            {fontSize: '28px', color: '#aaa', align: 'center', lineSpacing: 12,
+                wordWrap: {width: this.scale.width - 80}}).setOrigin(0.5, 0);
 
         // Ignore the OS key repeat: SPACE may still be held from the previous game
         this.input.keyboard?.on('keydown-SPACE', (event: KeyboardEvent) => {

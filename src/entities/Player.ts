@@ -4,6 +4,7 @@ import type {BulletData} from "../gameData/BulletData.ts";
 import Entity from './Entity.ts';
 import Health from "../components/Health.ts";
 import Movement from "../components/Movement.ts";
+import Skills, {SkillId} from "../components/Skills.ts";
 import Weapon from "../components/Weapon.ts";
 import RegistryConstants from "../RegistryConstants.ts";
 
@@ -39,6 +40,16 @@ export default class Player extends Entity {
     private static readonly DASH_GHOST_TINT: number = 0x66ccff;
     private static readonly MIN_MOVE_FOR_DASH: number = 0.1;
 
+    // Skills
+    private static readonly SHIELD_MS: number = 3000;
+    private static readonly SHIELD_RADIUS: number = 90;
+    private static readonly SHIELD_COLOR: number = 0x66ccff;
+    private static readonly OVERDRIVE_MS: number = 5000;
+    private static readonly OVERDRIVE_RATE_OF_FIRE_S: number = 0.07;
+    private static readonly OVERDRIVE_BULLETS: number = 7;
+    private static readonly OVERDRIVE_SPREAD_DEG: number = 40;
+    private static readonly OVERDRIVE_TINT: number = 0xffb000;
+
     private readonly _cursorKeys: Phaser.Types.Input.Keyboard.CursorKeys;
     // WASD (QWERTY) and ZQSD (AZERTY) both work, like in most FPS games
     private readonly _moveKeys: Record<'up' | 'down' | 'left' | 'right', Input.Keyboard.Key[]>;
@@ -51,6 +62,8 @@ export default class Player extends Entity {
     private _dashEndTime: number = 0;
     private _nextDashTime: number = 0;
     private _invincibleUntil: number = 0;
+    private _overdriveUntil: number = 0;
+    private _shieldBubble: Phaser.GameObjects.Arc | null = null;
 
     constructor(scene: Scene, x: number, y: number) {
         super(scene, x, y, 'sprites');
@@ -70,6 +83,10 @@ export default class Player extends Entity {
 
             this.scene.input.keyboard.addKey(KeyCodes.SHIFT).on('down', () => this.tryDash());
             this.scene.input.keyboard.addKey(KeyCodes.E).on('down', () => this.tryDash());
+            const useSkill = (id: SkillId) => this.getComponent(Skills)?.tryUse(id, this.scene.time.now);
+            this.scene.input.keyboard.addKey(KeyCodes.F).on('down', () => useSkill('shockwave'));
+            this.scene.input.keyboard.addKey(KeyCodes.C).on('down', () => useSkill('shield'));
+            this.scene.input.keyboard.addKey(KeyCodes.X).on('down', () => useSkill('overdrive'));
 
             this.scene.input.keyboard.addKey(Input.Keyboard.KeyCodes.ONE).on('down', () => this.selectPlayerShip(1));
             this.scene.input.keyboard.addKey(Input.Keyboard.KeyCodes.TWO).on('down', () => this.selectPlayerShip(2));
@@ -88,6 +105,7 @@ export default class Player extends Entity {
         this.addComponent(new Health(Player.MAX_HEALTH, this));
         this.addComponent(new Movement());
         this.addComponent(new Weapon(bulletsGroup, this._bulletData));
+        this.addComponent(new Skills());
 
         this.angle = -90;
 
@@ -103,6 +121,13 @@ export default class Player extends Entity {
             this._lastHealth = current;
             if (wasHit && current > 0)
                 this.startInvincibility();
+        });
+
+        this.getComponent(Skills)?.on(Skills.USED_EVENT, (id: SkillId) => {
+            if (id === 'shield')
+                this.activateShield();
+            else if (id === 'overdrive')
+                this.activateOverdrive();
         });
     }
 
@@ -121,6 +146,26 @@ export default class Player extends Entity {
             blink.stop();
             this.setAlpha(1);
         });
+    }
+
+    private activateShield() {
+        this.extendInvincibility(Player.SHIELD_MS);
+
+        this._shieldBubble?.destroy();
+        const bubble = this.scene.add.circle(this.x, this.y, Player.SHIELD_RADIUS, Player.SHIELD_COLOR, 0.2)
+            .setStrokeStyle(6, Player.SHIELD_COLOR, 0.9);
+        this._shieldBubble = bubble;
+        this.scene.time.delayedCall(Player.SHIELD_MS, () => {
+            bubble.destroy();
+            if (this._shieldBubble === bubble)
+                this._shieldBubble = null;
+        });
+    }
+
+    private activateOverdrive() {
+        this._overdriveUntil = this.scene.time.now + Player.OVERDRIVE_MS;
+        this.setTint(Player.OVERDRIVE_TINT);
+        this.scene.time.delayedCall(Player.OVERDRIVE_MS, () => this.clearTint());
     }
 
     private extendInvincibility(durationMs: number) {
@@ -200,13 +245,19 @@ export default class Player extends Entity {
             this.rotation = Phaser.Math.Angle.RotateTo(this.rotation, aimRotation, Player.AIM_TURN_SPEED * deltaTime);
         }
 
+        this._shieldBubble?.setPosition(this.x, this.y);
+
         // Press space or hold the left mouse button (or a finger) to shoot toward the mouse
         const isShooting: boolean = pointer.isDown && !pointer.rightButtonDown();
+        const isOverdrive: boolean = now < this._overdriveUntil;
+        const rateOfFire: number = isOverdrive ? Player.OVERDRIVE_RATE_OF_FIRE_S : this._rateOfFire;
         if (this._cursorKeys.space.isDown || isShooting) {
-            if (timeSinceLaunch - this._lastShotTime > this._rateOfFire * 1000) {
+            if (timeSinceLaunch - this._lastShotTime > rateOfFire * 1000) {
                 const score: number = Number(this.scene.registry.get(RegistryConstants.Keys.PLAYER_SCORE) ?? 0);
-                const bulletCount: number = Math.min(1 + Math.floor(score / Player.SCORE_PER_UPGRADE), Player.MAX_BULLETS);
-                this.getComponent(Weapon)?.shootSpread(this, bulletCount, (bulletCount - 1) * Player.SPREAD_DEG_PER_BULLET);
+                const bulletCount: number = isOverdrive ? Player.OVERDRIVE_BULLETS
+                    : Math.min(1 + Math.floor(score / Player.SCORE_PER_UPGRADE), Player.MAX_BULLETS);
+                const spread: number = isOverdrive ? Player.OVERDRIVE_SPREAD_DEG : (bulletCount - 1) * Player.SPREAD_DEG_PER_BULLET;
+                this.getComponent(Weapon)?.shootSpread(this, bulletCount, spread);
                 this.scene.sound.play('sfx_laser1');
 
                 this._lastShotTime = timeSinceLaunch;

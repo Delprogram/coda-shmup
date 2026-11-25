@@ -1,5 +1,6 @@
 import {GameObjects, Plugins, Physics, Scene} from "phaser";
 import Health from "../components/Health.ts";
+import Skills, {SkillId} from "../components/Skills.ts";
 import Boss from "../entities/Boss.ts";
 import Bullet from "../entities/Bullet.ts";
 import Enemy from "../entities/Enemy.ts";
@@ -43,7 +44,15 @@ export default class EntityManager extends Plugins.ScenePlugin {
     private static readonly BOSS_DROPS: number = 3;
     private static readonly BOSS_DROP_SPREAD: number = 120;
     private static readonly BOSS_CONTACT_DAMAGE: number = 2;
+    private static readonly PLAYER_SPAWN_BOTTOM_OFFSET: number = 400;
+    private static readonly BOSS_ULTIMATE_KILLS: number = 15;
     private static readonly SPAWN_SPEEDUP_PER_LEVEL: number = 0.3;
+
+    // Shockwave skill: clears enemy bullets and damages enemies around the player
+    private static readonly SHOCKWAVE_RADIUS: number = 520;
+    private static readonly SHOCKWAVE_DAMAGE: number = 3;
+    private static readonly SHOCKWAVE_MS: number = 350;
+    private static readonly SHOCKWAVE_COLOR: number = 0x66ccff;
 
     private _levelKills: number = 0;
     private _bossFight: boolean = false;
@@ -84,8 +93,13 @@ export default class EntityManager extends Plugins.ScenePlugin {
         this._playerBullets = this.scene!.physics.add.group(this.bulletGroupConfig);
         GroupUtils.populate(64, this._playerBullets);
 
-        this._player = new Player(this.scene!, this.scene!.cameras.main.centerX, this.scene!.cameras.main.height - 128);
+        // Spawn above the skill bar
+        this._player = new Player(this.scene!, this.scene!.cameras.main.centerX, this.scene!.cameras.main.height - EntityManager.PLAYER_SPAWN_BOTTOM_OFFSET);
         this._player.init(this._playerBullets);
+        this._player.getComponent(Skills)?.on(Skills.USED_EVENT, (id: SkillId) => {
+            if (id === 'shockwave')
+                this.shockwave(this._player.x, this._player.y);
+        });
 
         console.log("[EntityManager] Player spawned");
 
@@ -221,10 +235,40 @@ export default class EntityManager extends Plugins.ScenePlugin {
             if (Math.random() < dropChance)
                 this.dropHealthPickup(enemy.x, enemy.y);
 
+            this._player.getComponent(Skills)?.addKill();
             this._levelKills++;
             if (!this._bossFight && this._levelKills >= this.killsToBoss())
                 this.startBossFight();
         });
+    }
+
+    private shockwave(x: number, y: number) {
+        const scene = this.scene!;
+        const radius: number = EntityManager.SHOCKWAVE_RADIUS;
+        const isInRange = (object: GameObjects.Components.Transform, extra: number) =>
+            Phaser.Math.Distance.Between(x, y, object.x, object.y) <= radius + extra;
+
+        (this._enemyBullets.getMatching('active', true) as Bullet[])
+            .filter(bullet => isInRange(bullet, 0))
+            .forEach(bullet => bullet.disable());
+
+        [this._enemies, this._sineEnemies, this._bosses].forEach(group => {
+            (group.getMatching('active', true) as Entity[])
+                .filter(enemy => isInRange(enemy, enemy.displayWidth / 2))
+                .forEach(enemy => enemy.getComponent(Health)?.damage(EntityManager.SHOCKWAVE_DAMAGE));
+        });
+
+        const ring = scene.add.circle(x, y, radius, EntityManager.SHOCKWAVE_COLOR, 0.15)
+            .setStrokeStyle(10, EntityManager.SHOCKWAVE_COLOR, 0.9).setScale(0);
+        scene.tweens.add({
+            targets: ring,
+            scale: 1,
+            alpha: 0,
+            duration: EntityManager.SHOCKWAVE_MS,
+            ease: 'Quad.easeOut',
+            onComplete: () => ring.destroy()
+        });
+        scene.cameras.main.shake(150, 0.01);
     }
 
     private dropHealthPickup(x: number, y: number) {
@@ -259,6 +303,9 @@ export default class EntityManager extends Plugins.ScenePlugin {
         const level: number = this.currentLevel();
 
         scene.registry.inc(RegistryConstants.Keys.PLAYER_SCORE, EntityManager.BOSS_SCORE_PER_LEVEL * level);
+        // Beating a boss fully charges the ultimate
+        for (let i: number = 0; i < EntityManager.BOSS_ULTIMATE_KILLS; i++)
+            this._player.getComponent(Skills)?.addKill();
         this.addComboKill(boss.x, boss.y);
         scene.cameras.main.shake(400, 0.03);
         for (let i: number = 0; i < EntityManager.BOSS_DROPS; i++) {
