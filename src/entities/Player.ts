@@ -17,7 +17,7 @@ export default class Player extends Entity {
     };
 
     // Weapon upgrade: one more bullet every SCORE_PER_UPGRADE points, up to MAX_BULLETS
-    private static readonly SCORE_PER_UPGRADE: number = 15;
+    private static readonly SCORE_PER_UPGRADE: number = 30;
     private static readonly MAX_BULLETS: number = 5;
     private static readonly SPREAD_DEG_PER_BULLET: number = 8;
 
@@ -30,6 +30,15 @@ export default class Player extends Entity {
     private static readonly INVINCIBILITY_MS: number = 900;
     private static readonly BLINK_MS: number = 90;
 
+    // Dash: short invincible burst in the move direction (or toward the aim when standing still)
+    private static readonly DASH_MS: number = 160;
+    private static readonly DASH_SPEED_FACTOR: number = 4;
+    private static readonly DASH_COOLDOWN_MS: number = 900;
+    private static readonly DASH_GHOST_ALPHA: number = 0.5;
+    private static readonly DASH_GHOST_FADE_MS: number = 220;
+    private static readonly DASH_GHOST_TINT: number = 0x66ccff;
+    private static readonly MIN_MOVE_FOR_DASH: number = 0.1;
+
     private readonly _cursorKeys: Phaser.Types.Input.Keyboard.CursorKeys;
     // WASD (QWERTY) and ZQSD (AZERTY) both work, like in most FPS games
     private readonly _moveKeys: Record<'up' | 'down' | 'left' | 'right', Input.Keyboard.Key[]>;
@@ -38,6 +47,10 @@ export default class Player extends Entity {
     private _lastShotTime: number;
     private _lastHealth: number;
     private readonly _smoothedDirection: Phaser.Math.Vector2 = new Phaser.Math.Vector2();
+    private readonly _dashDirection: Phaser.Math.Vector2 = new Phaser.Math.Vector2();
+    private _dashEndTime: number = 0;
+    private _nextDashTime: number = 0;
+    private _invincibleUntil: number = 0;
 
     constructor(scene: Scene, x: number, y: number) {
         super(scene, x, y, 'sprites');
@@ -55,10 +68,20 @@ export default class Player extends Entity {
                 right: [...keys(KeyCodes.D), this._cursorKeys.right],
             };
 
+            this.scene.input.keyboard.addKey(KeyCodes.SHIFT).on('down', () => this.tryDash());
+            this.scene.input.keyboard.addKey(KeyCodes.E).on('down', () => this.tryDash());
+
             this.scene.input.keyboard.addKey(Input.Keyboard.KeyCodes.ONE).on('down', () => this.selectPlayerShip(1));
             this.scene.input.keyboard.addKey(Input.Keyboard.KeyCodes.TWO).on('down', () => this.selectPlayerShip(2));
             this.scene.input.keyboard.addKey(Input.Keyboard.KeyCodes.THREE).on('down', () => this.selectPlayerShip(3));
         }
+
+        // Right click dashes, so the browser menu must not open
+        this.scene.input.mouse?.disableContextMenu();
+        this.scene.input.on(Input.Events.POINTER_DOWN, (pointer: Input.Pointer) => {
+            if (pointer.rightButtonDown())
+                this.tryDash();
+        });
     }
 
     public init(bulletsGroup: Phaser.Physics.Arcade.Group) {
@@ -84,7 +107,7 @@ export default class Player extends Entity {
     }
 
     private startInvincibility() {
-        this.arcadeBody.setEnable(false);
+        this.extendInvincibility(Player.INVINCIBILITY_MS);
 
         const blink = this.scene.tweens.add({
             targets: this,
@@ -97,9 +120,36 @@ export default class Player extends Entity {
         this.scene.time.delayedCall(Player.INVINCIBILITY_MS, () => {
             blink.stop();
             this.setAlpha(1);
-            // A dead player stays disabled
-            if (this.active)
-                this.arcadeBody.setEnable(true);
+        });
+    }
+
+    private extendInvincibility(durationMs: number) {
+        this._invincibleUntil = Math.max(this._invincibleUntil, this.scene.time.now + durationMs);
+    }
+
+    private tryDash() {
+        const now: number = this.scene.time.now;
+        if (!this.active || now < this._nextDashTime)
+            return;
+
+        if (this._smoothedDirection.length() > Player.MIN_MOVE_FOR_DASH)
+            this._dashDirection.copy(this._smoothedDirection).normalize();
+        else
+            this._dashDirection.setToPolar(this.rotation);
+
+        this._dashEndTime = now + Player.DASH_MS;
+        this._nextDashTime = now + Player.DASH_COOLDOWN_MS;
+        this.extendInvincibility(Player.DASH_MS);
+    }
+
+    private spawnDashGhost() {
+        const ghost = this.scene.add.image(this.x, this.y, this.texture.key, this.frame.name)
+            .setRotation(this.rotation).setAlpha(Player.DASH_GHOST_ALPHA).setTint(Player.DASH_GHOST_TINT);
+        this.scene.tweens.add({
+            targets: ghost,
+            alpha: 0,
+            duration: Player.DASH_GHOST_FADE_MS,
+            onComplete: () => ghost.destroy()
         });
     }
 
@@ -117,6 +167,9 @@ export default class Player extends Entity {
     preUpdate(timeSinceLaunch: number, deltaTime: number) {
         super.preUpdate(timeSinceLaunch, deltaTime);
 
+        const now: number = this.scene.time.now;
+        this.arcadeBody.setEnable(now >= this._invincibleUntil);
+
         // Move in 8 directions, normalized so diagonals are not faster
         const isDown = (keys: Input.Keyboard.Key[]) => keys.some(key => key.isDown);
         const direction = new Phaser.Math.Vector2(
@@ -128,6 +181,12 @@ export default class Player extends Entity {
         const movement = this.getComponent(Movement);
         movement?.moveHorizontally(this, this._smoothedDirection.x * deltaTime);
         movement?.moveVertically(this, this._smoothedDirection.y * deltaTime);
+
+        if (now < this._dashEndTime) {
+            movement?.moveHorizontally(this, this._dashDirection.x * Player.DASH_SPEED_FACTOR * deltaTime);
+            movement?.moveVertically(this, this._dashDirection.y * Player.DASH_SPEED_FACTOR * deltaTime);
+            this.spawnDashGhost();
+        }
 
         // Stop player from going offscreen
         const camera = this.scene.cameras.main;
@@ -141,8 +200,9 @@ export default class Player extends Entity {
             this.rotation = Phaser.Math.Angle.RotateTo(this.rotation, aimRotation, Player.AIM_TURN_SPEED * deltaTime);
         }
 
-        // Press space or hold the left mouse button to shoot toward the mouse
-        if (this._cursorKeys.space.isDown || this.scene.input.activePointer.isDown) {
+        // Press space or hold the left mouse button (or a finger) to shoot toward the mouse
+        const isShooting: boolean = pointer.isDown && !pointer.rightButtonDown();
+        if (this._cursorKeys.space.isDown || isShooting) {
             if (timeSinceLaunch - this._lastShotTime > this._rateOfFire * 1000) {
                 const score: number = Number(this.scene.registry.get(RegistryConstants.Keys.PLAYER_SCORE) ?? 0);
                 const bulletCount: number = Math.min(1 + Math.floor(score / Player.SCORE_PER_UPGRADE), Player.MAX_BULLETS);
