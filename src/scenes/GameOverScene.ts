@@ -19,7 +19,7 @@ export default class GameOverScene extends Phaser.Scene {
         this.add.text(screenCenterX, titleY + 220, this.registry.get(RegistryConstants.Keys.PLAYER_SCORE).toString(),
             {fontSize: '32px', color: '#fff', align: 'center'}).setOrigin(0.5);
 
-        this.add.text(screenCenterX, this.scale.height - 256, 'Press SPACE to play again',
+        this.add.text(screenCenterX, this.scale.height - 256, 'Press SPACE or CLICK to play again',
             {fontSize: '32px', color: '#fff', align: 'center'}).setOrigin(0.5);
 
         // Ignore the OS key repeat: SPACE is often still held from shooting when the player dies
@@ -29,6 +29,8 @@ export default class GameOverScene extends Phaser.Scene {
 
             this.scene.start(GameConstants.SceneKeys.HOME);
         });
+        // A button held from shooting does not count: only a new press restarts
+        this.input.once(Phaser.Input.Events.POINTER_DOWN, () => this.scene.start(GameConstants.SceneKeys.HOME));
 
         console.log("GameOverScene created");
     }

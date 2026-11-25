@@ -44,7 +44,7 @@ export default class HomeScene extends Phaser.Scene {
     create() {
         this.add.text(this.scale.width / 2, this.scale.width / 2, 'CODA SHMUP',
             {fontSize: '72px', color: '#fff', fontFamily: 'future'}).setOrigin(0.5);
-        this.add.text(this.scale.width / 2, this.scale.width / 2 + 72, 'Press SPACE to start',
+        this.add.text(this.scale.width / 2, this.scale.width / 2 + 72, 'Press SPACE or CLICK to start',
             {fontSize: '32px', color: '#fff'}).setOrigin(0.5);
 
         // Ignore the OS key repeat: SPACE may still be held from the previous game
@@ -52,10 +52,15 @@ export default class HomeScene extends Phaser.Scene {
             if (event.repeat)
                 return;
 
-            this.scene.launch(GameConstants.SceneKeys.MAIN_UI);
-            this.scene.start(GameConstants.SceneKeys.MAIN_GAME);
+            this.startGame();
         });
+        this.input.once(Phaser.Input.Events.POINTER_DOWN, this.startGame, this);
 
         console.log("HomeScene created");
+    }
+
+    private startGame() {
+        this.scene.launch(GameConstants.SceneKeys.MAIN_UI);
+        this.scene.start(GameConstants.SceneKeys.MAIN_GAME);
     }
 }
