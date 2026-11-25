@@ -14,6 +14,10 @@ export default class SineEnemy extends Entity {
     private _data: SineEnemyData;
     private _shootTimerConfig: Phaser.Types.Time.TimerEventConfig;
     private _shootTimer: Phaser.Time.TimerEvent;
+    // Every level adds health and one bullet to the spread shot, on top of the JSON values
+    private static readonly HEALTH_PER_LEVEL: number = 1;
+    private static readonly BULLETS_PER_LEVEL: number = 1;
+    private _level: number = 1;
 
     public init(bulletsGroup: Phaser.Physics.Arcade.Group) {
         this._data = this.scene.cache.json.get(SineEnemy.DATA_KEY) as SineEnemyData;
@@ -56,16 +60,16 @@ export default class SineEnemy extends Entity {
         this._shootTimer = this.scene.time.addEvent(this._shootTimerConfig);
     }
 
-    public enable(x: number, y: number, rotation: number) {
+    public enable(x: number, y: number, rotation: number, level: number) {
+        this._level = level;
         this.enableBody(true, x, y, true, true);
         this.setRotation(rotation);
         this.setTint(this._data.visual.tint);
         this._shootTimer.reset(this._shootTimerConfig);
         this.getComponent(SineMovement)?.reset(x, y, rotation);
 
-        // Restore health, in case the enemy is reused from the pool, without emitting events
-        const health = this.getComponent(Health);
-        health?.heal(health.max, false);
+        // Pooled enemy: health is set again from the JSON value and the current level, without emitting events
+        this.getComponent(Health)?.resetMax(this._data.health + SineEnemy.HEALTH_PER_LEVEL * (level - 1));
         this.getComponent(HealthBar)?.refresh();
     }
 
@@ -77,7 +81,8 @@ export default class SineEnemy extends Entity {
 
     private shoot() {
         const spreadShot = this._data.spreadShot;
-        this.getComponent(Weapon)?.shootSpread(this, spreadShot.count, spreadShot.angle);
+        const count: number = spreadShot.count + SineEnemy.BULLETS_PER_LEVEL * (this._level - 1);
+        this.getComponent(Weapon)?.shootSpread(this, count, spreadShot.angle);
         this.scene.sound.play('sfx_laser2');
     }
 

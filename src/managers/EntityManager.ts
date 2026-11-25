@@ -45,7 +45,11 @@ export default class EntityManager extends Plugins.ScenePlugin {
     private static readonly BOSS_DROP_SPREAD: number = 120;
     private static readonly BOSS_CONTACT_DAMAGE: number = 2;
     private static readonly PLAYER_SPAWN_BOTTOM_OFFSET: number = 400;
+    // More enemies at the same time on higher levels
     private static readonly MAX_ACTIVE_ENEMIES: number = 8;
+    private static readonly EXTRA_ENEMIES_PER_LEVEL: number = 2;
+    private static readonly MAX_ACTIVE_ENEMIES_CAP: number = 16;
+    private static readonly LEVELS_PER_EXTRA_SINE_ENEMY: number = 2;
 
     // Laser shield and (rarely) laser gun pickups appear at random places, only while a laser boss is alive
     private static readonly SHIELD_PICKUP_INTERVAL_MS: number = 4000;
@@ -417,7 +421,9 @@ export default class EntityManager extends Plugins.ScenePlugin {
     }
 
     private spawnEnemy() {
-        if (this._enemies.countActive(true) >= EntityManager.MAX_ACTIVE_ENEMIES) {
+        const maxActive: number = Math.min(EntityManager.MAX_ACTIVE_ENEMIES
+            + EntityManager.EXTRA_ENEMIES_PER_LEVEL * (this.currentLevel() - 1), EntityManager.MAX_ACTIVE_ENEMIES_CAP);
+        if (this._enemies.countActive(true) >= maxActive) {
             return;
         }
 
@@ -427,7 +433,7 @@ export default class EntityManager extends Plugins.ScenePlugin {
         }
 
         const spawn = this.randomEdgeSpawn(enemy.displayWidth);
-        enemy.enable(spawn.x, spawn.y, spawn.rotation, this._player);
+        enemy.enable(spawn.x, spawn.y, spawn.rotation, this._player, this.currentLevel());
 
         this.game!.events.emit(GameConstants.Events.ENEMY_SPAWNED_EVENT, enemy);
 
@@ -435,7 +441,9 @@ export default class EntityManager extends Plugins.ScenePlugin {
     }
 
     private spawnSineEnemy(data: SineEnemyData) {
-        if (this._sineEnemies.countActive(true) >= data.spawn.maxActive) {
+        const maxActive: number = data.spawn.maxActive
+            + Math.floor((this.currentLevel() - 1) / EntityManager.LEVELS_PER_EXTRA_SINE_ENEMY);
+        if (this._sineEnemies.countActive(true) >= maxActive) {
             return;
         }
 
@@ -445,7 +453,7 @@ export default class EntityManager extends Plugins.ScenePlugin {
         }
 
         const spawn = this.randomEdgeSpawn(enemy.displayWidth);
-        enemy.enable(spawn.x, spawn.y, spawn.rotation);
+        enemy.enable(spawn.x, spawn.y, spawn.rotation, this.currentLevel());
 
         this.game!.events.emit(GameConstants.Events.ENEMY_SPAWNED_EVENT, enemy);
     }
