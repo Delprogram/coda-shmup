@@ -2,6 +2,8 @@ import {Loader} from "phaser";
 import GameConstants from "../GameConstants.ts";
 
 export default class HomeScene extends Phaser.Scene {
+    private static readonly TITLE_Y_RATIO: number = 0.3;
+
     constructor() {
         super(GameConstants.SceneKeys.HOME);
     }
@@ -42,11 +44,12 @@ export default class HomeScene extends Phaser.Scene {
     }
 
     create() {
-        this.add.text(this.scale.width / 2, this.scale.width / 2, 'CODA SHMUP',
+        const titleY: number = this.scale.height * HomeScene.TITLE_Y_RATIO;
+        this.add.text(this.scale.width / 2, titleY, 'CODA SHMUP',
             {fontSize: '72px', color: '#fff', fontFamily: 'future'}).setOrigin(0.5);
-        this.add.text(this.scale.width / 2, this.scale.width / 2 + 72, 'Press SPACE or CLICK to start',
+        this.add.text(this.scale.width / 2, titleY + 72, 'Press SPACE or CLICK to start',
             {fontSize: '32px', color: '#fff'}).setOrigin(0.5);
-        this.add.text(this.scale.width / 2, this.scale.width / 2 + 128, 'ZQSD / WASD to move - aim and shoot with the mouse\nSHIFT / E / RIGHT CLICK to dash\nF shockwave - C shield - X overdrive (charged by kills)',
+        this.add.text(this.scale.width / 2, titleY + 128, 'ZQSD / WASD to move - aim and shoot with the mouse\nSHIFT / E / RIGHT CLICK to dash\nF shockwave - C shield - X overdrive (charged by kills)',
             {fontSize: '28px', color: '#aaa', align: 'center', lineSpacing: 12,
                 wordWrap: {width: this.scale.width - 80}}).setOrigin(0.5, 0);
 

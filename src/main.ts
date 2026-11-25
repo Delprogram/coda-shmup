@@ -10,7 +10,8 @@ import SaveManager from "./managers/SaveManager.ts";
 // https://docs.phaser.io/api-documentation/typedef/types-core#gameconfig
 const config: Types.Core.GameConfig = {
     type: AUTO,
-    width: 1080,
+    // Wide play area: enemies come from every side
+    width: 2880,
     height: 1920,
     parent: 'game-container',
     backgroundColor: '#000',
