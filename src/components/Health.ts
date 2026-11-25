@@ -6,6 +6,8 @@ export default class Health extends Phaser.Events.EventEmitter implements ICompo
 
     public static readonly CHANGE_EVENT: string = 'change';
     public static readonly DEATH_EVENT: string = 'death';
+    private static readonly PARTICLES_COUNT: number = 16;
+    private static readonly PARTICLES_LIFESPAN_MS: number = 500;
 
     private _current: number;
     private readonly _max: number;
@@ -67,6 +69,17 @@ export default class Health extends Phaser.Events.EventEmitter implements ICompo
                 }).once('complete', function(_tween: any, _targets: any){
                     explosion.destroy();
                 }, this);
+
+                const particles = scene.add.particles(this._entity.x, this._entity.y, "sprites", {
+                    frame: ["star1", "star2", "star3"],
+                    speed: {min: 150, max: 500},
+                    scale: {start: 1, end: 0},
+                    tint: [0xffe066, 0xf25f5c, 0xffffff],
+                    lifespan: Health.PARTICLES_LIFESPAN_MS,
+                    emitting: false
+                });
+                particles.explode(Health.PARTICLES_COUNT);
+                scene.time.delayedCall(Health.PARTICLES_LIFESPAN_MS, () => particles.destroy());
 
                 this.emit(Health.DEATH_EVENT);
             }
