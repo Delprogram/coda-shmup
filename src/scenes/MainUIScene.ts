@@ -14,6 +14,10 @@ export default class MainUIScene extends Scene {
 
     private _healthBarFill: GameObjects.Rectangle;
     private _healthBarText: GameObjects.Text;
+    private _nitroBarFill: GameObjects.Rectangle;
+    private static readonly NITRO_BAR_HEIGHT: number = 16;
+    private static readonly NITRO_BAR_GAP: number = 10;
+    private static readonly NITRO_COLOR: number = 0xff9f1c;
     private _scoreText: GameObjects.BitmapText;
     // The bitmap font only has digits: words use the TTF font
     private _comboText: GameObjects.Text;
@@ -85,6 +89,15 @@ export default class MainUIScene extends Scene {
             HealthBar.colorFor(1)).setOrigin(0, 0.5);
         this._healthBarText = this.add.text(barX + MainUIScene.HEALTH_BAR_WIDTH / 2, barY, "",
             {fontSize: '28px', color: '#fff', fontFamily: 'future'}).setOrigin(0.5);
+
+        // Nitro gauge, right under the health bar
+        const nitroY: number = barY + MainUIScene.HEALTH_BAR_HEIGHT / 2 + MainUIScene.NITRO_BAR_GAP + MainUIScene.NITRO_BAR_HEIGHT / 2;
+        this.add.rectangle(barX, nitroY, MainUIScene.HEALTH_BAR_WIDTH, MainUIScene.NITRO_BAR_HEIGHT, 0x000000, 0.6)
+            .setOrigin(0, 0.5).setStrokeStyle(3, 0xffffff, 0.6);
+        this._nitroBarFill = this.add.rectangle(barX, nitroY, MainUIScene.HEALTH_BAR_WIDTH, MainUIScene.NITRO_BAR_HEIGHT,
+            MainUIScene.NITRO_COLOR).setOrigin(0, 0.5);
+        this.add.text(barX + MainUIScene.HEALTH_BAR_WIDTH + 12, nitroY, "NITRO (SHIFT)",
+            {fontSize: '20px', color: '#ff9f1c', fontFamily: 'future'}).setOrigin(0, 0.5);
 
         let scoreStr: string = "".padStart(GameConstants.MAX_SCORE_DIGITS, "0");
         if (this.registry.has(RegistryConstants.Keys.PLAYER_SCORE))
@@ -201,6 +214,8 @@ export default class MainUIScene extends Scene {
         const player = this._player;
         if (!player?.scene)
             return;
+
+        this._nitroBarFill.scaleX = player.nitroRatio;
 
         const states = player.getComponent(Skills)?.states(player.scene.time.now) ?? [];
         states.forEach((state, i) => {

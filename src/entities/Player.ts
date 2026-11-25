@@ -48,6 +48,18 @@ export default class Player extends Entity implements LaserBlocker {
     private static readonly BARRIER_COLOR: number = 0x66ffcc;
     private static readonly BARRIER_PULSE_MS: number = 300;
 
+    // Nitro: hold SHIFT while moving to go faster, as long as the gauge lasts. It recharges when not used, and
+    // once empty it must refill a bit before it can be used again (no on/off flicker)
+    private static readonly NITRO_MAX_MS: number = 3000;
+    private static readonly NITRO_RECHARGE_PER_MS: number = 0.5;
+    private static readonly NITRO_MIN_RATIO_TO_START: number = 0.25;
+    private static readonly NITRO_SPEED_FACTOR: number = 2.2;
+    // Speed ramps up and down instead of jumping
+    private static readonly NITRO_RAMP_MS: number = 120;
+    private static readonly MIN_MOVE_FOR_NITRO: number = 0.1;
+    private static readonly NITRO_FLAME_OFFSET: number = 50;
+    private static readonly NITRO_FLAME_SPREAD_DEG: number = 15;
+
     // Laser gun: rare pickup during laser boss fights, right click fires piercing beams
     private static readonly LASER_GUN_MS: number = 6000;
     private static readonly LASER_GUN_RATE_OF_FIRE_S: number = 0.08;
@@ -85,6 +97,17 @@ export default class Player extends Entity implements LaserBlocker {
     private _barrier: Phaser.GameObjects.Arc;
     private _barrierUntil: number = 0;
     private _enemyBullets: () => Bullet[] = () => [];
+    private _nitroKey: Input.Keyboard.Key | null = null;
+    private _nitroMs: number = Player.NITRO_MAX_MS;
+    private _isNitroActive: boolean = false;
+    private _speedFactor: number = 1;
+    private _nitroFlames: Phaser.GameObjects.Particles.ParticleEmitter;
+    private _flameAngleDeg: number = 90;
+
+    // 0 = empty, 1 = full: read by the UI gauge
+    public get nitroRatio(): number {
+        return this._nitroMs / Player.NITRO_MAX_MS;
+    }
 
     constructor(scene: Scene, x: number, y: number) {
         super(scene, x, y, 'sprites');
@@ -106,6 +129,7 @@ export default class Player extends Entity implements LaserBlocker {
             this.scene.input.keyboard.addKey(KeyCodes.F).on('down', () => useSkill('shockwave'));
             this.scene.input.keyboard.addKey(KeyCodes.C).on('down', () => useSkill('shield'));
             this.scene.input.keyboard.addKey(KeyCodes.A).on('down', () => useSkill('barrier'));
+            this._nitroKey = this.scene.input.keyboard.addKey(KeyCodes.SHIFT);
             this.scene.input.keyboard.addKey(KeyCodes.X).on('down', () => useSkill('overdrive'));
 
             this.scene.input.keyboard.addKey(Input.Keyboard.KeyCodes.ONE).on('down', () => this.selectPlayerShip(1));
@@ -126,6 +150,18 @@ export default class Player extends Entity implements LaserBlocker {
 
         this._deflector = this.scene.add.rectangle(this.x, this.y, Player.DEFLECTOR_THICKNESS, Player.DEFLECTOR_LENGTH,
             Player.DEFLECTOR_COLOR, 0.85).setStrokeStyle(4, 0xffffff, 0.9).setVisible(false);
+        this._nitroFlames = this.scene.add.particles(0, 0, 'sprites', {
+            frame: ['star1', 'star2'],
+            // Read at each emission, so the flames always point behind the ship
+            angle: {onEmit: () => this._flameAngleDeg + Phaser.Math.Between(-Player.NITRO_FLAME_SPREAD_DEG, Player.NITRO_FLAME_SPREAD_DEG)},
+            speed: {min: 150, max: 300},
+            scale: {start: 0.7, end: 0},
+            alpha: {start: 0.9, end: 0},
+            tint: [0xffe066, 0xff9f1c, 0xf25f5c],
+            lifespan: 250,
+            frequency: 15,
+            emitting: false
+        });
         this._barrier = this.scene.add.circle(this.x, this.y, Player.BARRIER_RADIUS, Player.BARRIER_COLOR, 0.08)
             .setStrokeStyle(8, Player.BARRIER_COLOR, 0.8).setVisible(false);
         this.scene.tweens.add({
@@ -159,6 +195,7 @@ export default class Player extends Entity implements LaserBlocker {
             this._shieldBubble?.setVisible(false);
             this._barrierUntil = 0;
             this._barrier.setVisible(false);
+            this._nitroFlames.stop();
             this._laserGunUntil = 0;
             this.getComponent(LaserWeapon)?.clear();
         });
@@ -273,6 +310,34 @@ export default class Player extends Entity implements LaserBlocker {
         this._invincibleUntil = Math.max(this._invincibleUntil, this.scene.time.now + durationMs);
     }
 
+    private updateNitro(isMoving: boolean, deltaTime: number) {
+        const wantsNitro: boolean = isMoving && (this._nitroKey?.isDown ?? false);
+        if (!wantsNitro || this._nitroMs <= 0)
+            this._isNitroActive = false;
+        else if (!this._isNitroActive && this.nitroRatio >= Player.NITRO_MIN_RATIO_TO_START)
+            this._isNitroActive = true;
+
+        if (this._isNitroActive)
+            this._nitroMs = Math.max(this._nitroMs - deltaTime, 0);
+        else
+            this._nitroMs = Math.min(this._nitroMs + Player.NITRO_RECHARGE_PER_MS * deltaTime, Player.NITRO_MAX_MS);
+
+        const targetFactor: number = this._isNitroActive ? Player.NITRO_SPEED_FACTOR : 1;
+        this._speedFactor += (targetFactor - this._speedFactor) * (1 - Math.exp(-deltaTime / Player.NITRO_RAMP_MS));
+
+        // Flames come out behind the ship, opposite to where it is going
+        const backAngle: number = this._smoothedDirection.angle() + Math.PI;
+        const back = new Phaser.Math.Vector2().setToPolar(backAngle, Player.NITRO_FLAME_OFFSET);
+        this._nitroFlames.setPosition(this.x + back.x, this.y + back.y);
+        this._flameAngleDeg = Phaser.Math.RadToDeg(backAngle);
+        if (this._isNitroActive !== this._nitroFlames.emitting) {
+            if (this._isNitroActive)
+                this._nitroFlames.start();
+            else
+                this._nitroFlames.stop();
+        }
+    }
+
     public selectPlayerShip(playerShipDataId: number) {
         const playerShipsData = this.scene.cache.json.get('playerShips') as PlayerShipsData;
         this._playerShipData = playerShipsData[playerShipDataId];
@@ -298,9 +363,10 @@ export default class Player extends Entity implements LaserBlocker {
         ).normalize();
         // Frame-rate independent smoothing toward the wanted direction
         this._smoothedDirection.lerp(direction, 1 - Math.exp(-deltaTime / Player.MOVE_SMOOTHING_MS));
+        this.updateNitro(direction.length() > Player.MIN_MOVE_FOR_NITRO, deltaTime);
         const movement = this.getComponent(Movement);
-        movement?.moveHorizontally(this, this._smoothedDirection.x * deltaTime);
-        movement?.moveVertically(this, this._smoothedDirection.y * deltaTime);
+        movement?.moveHorizontally(this, this._smoothedDirection.x * this._speedFactor * deltaTime);
+        movement?.moveVertically(this, this._smoothedDirection.y * this._speedFactor * deltaTime);
 
         // Stop player from going offscreen
         const camera = this.scene.cameras.main;
