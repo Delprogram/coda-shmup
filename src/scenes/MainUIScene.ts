@@ -68,6 +68,8 @@ export default class MainUIScene extends Scene {
             this.game.events.off(GameConstants.Events.BOSS_INCOMING_EVENT, this.onBossIncoming, this);
             this.game.events.off(GameConstants.Events.BOSS_SPAWNED_EVENT, this.onBossSpawned, this);
             this._bossHealth?.off(Health.CHANGE_EVENT, this.onBossHealthChanged, this);
+            this._player?.getComponent(Health)?.off(Health.CHANGE_EVENT, this.onPlayerHealthChanged, this);
+            this._player = null;
         }, this);
     }
 
@@ -212,6 +214,8 @@ export default class MainUIScene extends Scene {
     }
 
     private onPlayerSpawned(player: Player) {
+        // The previous player (before a restart) must not update this UI anymore
+        this._player?.getComponent(Health)?.off(Health.CHANGE_EVENT, this.onPlayerHealthChanged, this);
         this._player = player;
 
         // A restart (R key) can happen in the middle of a boss fight
@@ -222,7 +226,13 @@ export default class MainUIScene extends Scene {
             return;
 
         this.updateHealthBar(health.current, health.max, false);
-        health.on(Health.CHANGE_EVENT, (current: number) => this.updateHealthBar(current, health.max, true), this);
+        health.on(Health.CHANGE_EVENT, this.onPlayerHealthChanged, this);
+    }
+
+    private onPlayerHealthChanged(current: number) {
+        const health = this._player?.getComponent(Health);
+        if (health)
+            this.updateHealthBar(current, health.max, true);
     }
 
     private updateHealthBar(current: number, max: number, animate: boolean) {
