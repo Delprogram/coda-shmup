@@ -4,7 +4,13 @@ import Health from "../components/Health.ts";
 import Movement from "../components/Movement.ts";
 import Weapon from "../components/Weapon.ts";
 
+// Kamikaze UFO: charges at the player, turning toward it for a while, then keeps going straight so it can be dodged
 export default class Enemy extends Entity {
+    private static readonly SPEED: number = 0.32;
+    // Max turn speed toward the target, in radians per ms: low enough to be dodged with a side step
+    private static readonly HOMING_TURN_SPEED: number = 0.0018;
+    private static readonly HOMING_MS: number = 4500;
+
     private readonly _bulletData: BulletData = {
         width: 12,
         height: 12,
@@ -14,10 +20,12 @@ export default class Enemy extends Entity {
     };
     private _shootTimerConfig: Phaser.Types.Time.TimerEventConfig;
     private _shootTimer: Phaser.Time.TimerEvent;
+    private _target: Entity | null = null;
+    private _homingUntil: number = 0;
 
     public init(bulletsGroup: Phaser.Physics.Arcade.Group) {
         this.addComponent(new Health(1, this));
-        this.addComponent(new Movement(0.2));
+        this.addComponent(new Movement(Enemy.SPEED));
         this.addComponent(new Weapon(bulletsGroup, this._bulletData));
 
         // Listen once per enemy, not on every enable(): pooled enemies are reused many times
@@ -66,9 +74,11 @@ export default class Enemy extends Entity {
         this.arcadeBody.setCircle(this.displayWidth / 2);
     }
 
-    public enable(x: number, y: number, rotation: number) {
+    public enable(x: number, y: number, rotation: number, target: Entity) {
         this.enableBody(true, x, y, true, true);
         this.setRotation(rotation);
+        this._target = target;
+        this._homingUntil = this.scene.time.now + Enemy.HOMING_MS;
         this._shootTimer.reset(this._shootTimerConfig);
 
         // Restore health, in case the enemy is reused from the pool, without emitting events
@@ -100,6 +110,11 @@ export default class Enemy extends Entity {
         // Recycle once it has crossed the screen (it spawns just outside, so the margin must be larger)
         if (this.isOutOfScreen(this.displayWidth * 2)) {
             this.disable();
+        }
+
+        if (this._target?.active && this.scene.time.now < this._homingUntil) {
+            const toTarget: number = Phaser.Math.Angle.Between(this.x, this.y, this._target.x, this._target.y);
+            this.rotation = Phaser.Math.Angle.RotateTo(this.rotation, toTarget, Enemy.HOMING_TURN_SPEED * deltaTime);
         }
 
         if (!this.isTinted)

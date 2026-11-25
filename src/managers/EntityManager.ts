@@ -82,9 +82,6 @@ export default class EntityManager extends Plugins.ScenePlugin {
     // Spawns speed up with the level, capped so the game stays playable
     private static readonly MAX_SPAWN_SPEEDUP: number = 3;
 
-    // Enemies aim at a random point in the central area of the screen (as a ratio of its size)
-    private static readonly SPAWN_TARGET_MIN: number = 0.3;
-    private static readonly SPAWN_TARGET_MAX: number = 0.7;
 
     constructor(scene: Scene, pluginManager: Plugins.PluginManager) {
         super(scene, pluginManager, EntityManager.PLUGIN_KEY);
@@ -402,7 +399,7 @@ export default class EntityManager extends Plugins.ScenePlugin {
         this._spawnTimers.forEach(timer => timer.timeScale = speedup);
     }
 
-    // Random point just outside one of the 4 screen edges, facing a random point near the center
+    // Random point just outside one of the 4 screen edges, facing the player (or the center once it is dead)
     private randomEdgeSpawn(margin: number): {x: number, y: number, rotation: number} {
         const camera = this.scene!.cameras.main;
         let x: number;
@@ -414,8 +411,8 @@ export default class EntityManager extends Plugins.ScenePlugin {
             default: x = camera.width + margin; y = Phaser.Math.Between(0, camera.height); break;
         }
 
-        const targetX: number = camera.width * Phaser.Math.FloatBetween(EntityManager.SPAWN_TARGET_MIN, EntityManager.SPAWN_TARGET_MAX);
-        const targetY: number = camera.height * Phaser.Math.FloatBetween(EntityManager.SPAWN_TARGET_MIN, EntityManager.SPAWN_TARGET_MAX);
+        const targetX: number = this._player.active ? this._player.x : camera.centerX;
+        const targetY: number = this._player.active ? this._player.y : camera.centerY;
         return {x, y, rotation: Phaser.Math.Angle.Between(x, y, targetX, targetY)};
     }
 
@@ -430,7 +427,7 @@ export default class EntityManager extends Plugins.ScenePlugin {
         }
 
         const spawn = this.randomEdgeSpawn(enemy.displayWidth);
-        enemy.enable(spawn.x, spawn.y, spawn.rotation);
+        enemy.enable(spawn.x, spawn.y, spawn.rotation, this._player);
 
         this.game!.events.emit(GameConstants.Events.ENEMY_SPAWNED_EVENT, enemy);
 
