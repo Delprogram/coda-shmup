@@ -1,21 +1,25 @@
 import type {BulletData} from '../gameData/BulletData.ts';
 import Entity from './Entity.ts';
 import Health from "../components/Health.ts";
+import LaserWeapon from "../components/LaserWeapon.ts";
 import Movement from "../components/Movement.ts";
 import Weapon from "../components/Weapon.ts";
 
-// End-of-level boss: enters from the top, sways left and right and cycles through 3 attack patterns.
-// Health, attack speed and bullet count grow with the level.
+// End-of-level boss: enters from the top, sways left and right and cycles through attack patterns.
+// Level 1 is a bullet boss, level 2 a laser boss, then every boss mixes both. Health, attack speed and
+// bullet/laser count grow with the level.
+
+type BossPattern = 'aimedFan' | 'ring' | 'spiral' | 'aimedLaser' | 'laserFan' | 'laserSweep';
+type BossType = {title: string, tint: number, patterns: BossPattern[]};
 export default class Boss extends Entity {
     private static readonly BASE_HEALTH: number = 80;
     private static readonly HEALTH_PER_LEVEL: number = 50;
     private static readonly SCALE: number = 3;
-    private static readonly TINT: number = 0xb44cff;
     private static readonly HIT_FLASH_COLOR: number = 0xffffff;
     private static readonly HIT_FLASH_DURATION_MS: number = 50;
 
     private static readonly ENTRY_SPEED: number = 0.2;
-    private static readonly HOVER_Y_RATIO: number = 0.18;
+    private static readonly HOVER_Y_RATIO: number = 0.28;
     private static readonly SWAY_AMPLITUDE_RATIO: number = 0.3;
     private static readonly SWAY_FREQUENCY_HZ: number = 0.12;
     private static readonly MS_PER_SECOND: number = 1000;
@@ -36,7 +40,26 @@ export default class Boss extends Entity {
     private static readonly SPIRAL_STEP_DEG: number = 12;
     private static readonly SPIRAL_INTERVAL_MS: number = 130;
     private static readonly FULL_CIRCLE_DEG: number = 360;
-    private static readonly PATTERN_COUNT: number = 3;
+
+    // Laser patterns
+    private static readonly LASER_TELEGRAPH_MS: number = 750;
+    private static readonly LASER_ACTIVE_MS: number = 500;
+    private static readonly LASER_FAN_BASE_COUNT: number = 3;
+    private static readonly LASER_FAN_ANGLE_DEG: number = 50;
+    private static readonly LASER_SWEEP_TELEGRAPH_MS: number = 900;
+    private static readonly LASER_SWEEP_ACTIVE_MS: number = 1600;
+    private static readonly LASER_SWEEP_SPEED: number = 0.0013;
+
+    private static readonly CLASSIC: BossType = {
+        title: "DESTROYER", tint: 0xb44cff, patterns: ['aimedFan', 'ring', 'spiral']
+    };
+    private static readonly LASER: BossType = {
+        title: "LASER CORE", tint: 0xff3355, patterns: ['aimedLaser', 'laserFan', 'laserSweep']
+    };
+    private static readonly OVERLORD: BossType = {
+        title: "OVERLORD", tint: 0xffb000,
+        patterns: ['aimedFan', 'aimedLaser', 'ring', 'laserSweep', 'spiral', 'laserFan']
+    };
 
     private readonly _bulletData: BulletData = {
         width: 22,
@@ -52,14 +75,19 @@ export default class Boss extends Entity {
     private _attackIndex: number = 0;
     private _swayElapsedMs: number = 0;
     private _hoverY: number = 0;
+    private _type: BossType = Boss.CLASSIC;
+
+    public get title(): string {
+        return this._type.title;
+    }
 
     public init(bulletsGroup: Phaser.Physics.Arcade.Group) {
         this.addComponent(new Health(Boss.BASE_HEALTH, this));
         this.addComponent(new Movement(Boss.ENTRY_SPEED));
         this.addComponent(new Weapon(bulletsGroup, this._bulletData));
+        this.addComponent(new LaserWeapon(this, () => this._target));
 
         this.setScale(Boss.SCALE);
-        this.setTint(Boss.TINT);
         // Radius is in unscaled frame pixels, the arcade body follows the sprite scale
         this.arcadeBody.setCircle(this.width / 2);
 
@@ -71,7 +99,7 @@ export default class Boss extends Entity {
                 this.disableBody();
 
             this.scene.time.delayedCall(Boss.HIT_FLASH_DURATION_MS, () => {
-                this.setTint(Boss.TINT);
+                this.setTint(this._type.tint);
                 if (health.current == 0)
                     this.disable();
             });
@@ -83,11 +111,12 @@ export default class Boss extends Entity {
         this._target = target;
         this._attackIndex = 0;
         this._swayElapsedMs = 0;
+        this._type = level === 1 ? Boss.CLASSIC : level === 2 ? Boss.LASER : Boss.OVERLORD;
 
         const camera = this.scene.cameras.main;
         this._hoverY = camera.height * Boss.HOVER_Y_RATIO;
         this.enableBody(true, camera.centerX, -this.displayHeight, true, true);
-        this.setTint(Boss.TINT);
+        this.setTint(this._type.tint);
 
         this.getComponent(Health)?.resetMax(Boss.BASE_HEALTH + Boss.HEALTH_PER_LEVEL * (level - 1));
 
@@ -106,29 +135,62 @@ export default class Boss extends Entity {
         this.disableBody(true, true);
         this._attackTimer?.remove();
         this._attackTimer = null;
+        this.getComponent(LaserWeapon)?.clear();
     }
 
     private attack() {
         if (!this.active || this.y < this._hoverY)
             return;
 
-        switch (this._attackIndex % Boss.PATTERN_COUNT) {
-            case 0:
-                this.fireAimedFan();
-                break;
-            case 1:
-                this.fireRing();
-                break;
-            default:
-                this.fireSpiral();
-                break;
+        const patterns = this._type.patterns;
+        switch (patterns[this._attackIndex % patterns.length]) {
+            case 'aimedFan': this.fireAimedFan(); break;
+            case 'ring': this.fireRing(); break;
+            case 'spiral': this.fireSpiral(); break;
+            case 'aimedLaser': this.fireAimedLaser(); break;
+            case 'laserFan': this.fireLaserFan(); break;
+            case 'laserSweep': this.fireLaserSweep(); break;
         }
         this._attackIndex++;
         this.scene.sound.play('sfx_laser2');
     }
 
+    private angleToTarget(): number {
+        return Phaser.Math.Angle.Between(this.x, this.y, this._target.x, this._target.y);
+    }
+
+    private fireAimedLaser() {
+        this.getComponent(LaserWeapon)?.fire(this.angleToTarget(), {
+            angleOffset: 0, sweepSpeed: 0, telegraphMs: Boss.LASER_TELEGRAPH_MS, activeMs: Boss.LASER_ACTIVE_MS
+        });
+    }
+
+    private fireLaserFan() {
+        const count: number = Boss.LASER_FAN_BASE_COUNT + this._level - 1;
+        const spread: number = Phaser.Math.DegToRad(Boss.LASER_FAN_ANGLE_DEG);
+        const baseAngle: number = this.angleToTarget();
+        for (let i: number = 0; i < count; i++) {
+            this.getComponent(LaserWeapon)?.fire(baseAngle, {
+                angleOffset: -spread / 2 + spread * i / (count - 1), sweepSpeed: 0,
+                telegraphMs: Boss.LASER_TELEGRAPH_MS, activeMs: Boss.LASER_ACTIVE_MS
+            });
+        }
+    }
+
+    // Two opposite beams that rotate, the player has to circle around the boss
+    private fireLaserSweep() {
+        const direction: number = Math.random() < 0.5 ? 1 : -1;
+        const baseAngle: number = this.angleToTarget() + Math.PI / 2;
+        for (const offset of [0, Math.PI]) {
+            this.getComponent(LaserWeapon)?.fire(baseAngle, {
+                angleOffset: offset, sweepSpeed: direction * Boss.LASER_SWEEP_SPEED,
+                telegraphMs: Boss.LASER_SWEEP_TELEGRAPH_MS, activeMs: Boss.LASER_SWEEP_ACTIVE_MS
+            });
+        }
+    }
+
     private fireAimedFan() {
-        this.rotation = Phaser.Math.Angle.Between(this.x, this.y, this._target.x, this._target.y);
+        this.rotation = this.angleToTarget();
         this.getComponent(Weapon)?.shootSpread(this, Boss.AIMED_BASE_COUNT + this._level - 1, Boss.AIMED_ANGLE_DEG);
     }
 
@@ -154,6 +216,7 @@ export default class Boss extends Entity {
 
     preUpdate(timeSinceLaunch: number, deltaTime: number) {
         super.preUpdate(timeSinceLaunch, deltaTime);
+        this.getComponent(LaserWeapon)?.update(deltaTime);
 
         // Enter from the top, then sway left and right around the center
         if (this.y < this._hoverY) {
