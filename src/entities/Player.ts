@@ -59,6 +59,18 @@ export default class Player extends Entity implements LaserBlocker {
     private static readonly MIN_MOVE_FOR_NITRO: number = 0.1;
     private static readonly NITRO_FLAME_OFFSET: number = 50;
     private static readonly NITRO_FLAME_SPREAD_DEG: number = 15;
+    private static readonly NITRO_CORE_SPREAD_DEG: number = 6;
+    // Ghost copies of the ship left behind while boosting
+    private static readonly NITRO_GHOST_INTERVAL_MS: number = 40;
+    private static readonly NITRO_GHOST_ALPHA: number = 0.45;
+    private static readonly NITRO_GHOST_FADE_MS: number = 220;
+    private static readonly NITRO_GHOST_TINT: number = 0xff9f1c;
+    // Kick when the boost starts: spark burst, expanding ring and a tiny screen shake
+    private static readonly NITRO_KICK_SPARKS: number = 18;
+    private static readonly NITRO_KICK_RING_RADIUS: number = 140;
+    private static readonly NITRO_KICK_RING_MS: number = 250;
+    private static readonly NITRO_KICK_SHAKE_MS: number = 90;
+    private static readonly NITRO_KICK_SHAKE_INTENSITY: number = 0.004;
 
     // Laser gun: rare pickup during laser boss fights, right click fires piercing beams
     private static readonly LASER_GUN_MS: number = 6000;
@@ -101,7 +113,10 @@ export default class Player extends Entity implements LaserBlocker {
     private _nitroMs: number = Player.NITRO_MAX_MS;
     private _isNitroActive: boolean = false;
     private _speedFactor: number = 1;
+    // Outer orange flames + inner white-blue core, both glowing (additive blending)
     private _nitroFlames: Phaser.GameObjects.Particles.ParticleEmitter;
+    private _nitroCore: Phaser.GameObjects.Particles.ParticleEmitter;
+    private _lastNitroGhostTime: number = 0;
     private _flameAngleDeg: number = 90;
 
     // 0 = empty, 1 = full: read by the UI gauge
@@ -154,12 +169,26 @@ export default class Player extends Entity implements LaserBlocker {
             frame: ['star1', 'star2'],
             // Read at each emission, so the flames always point behind the ship
             angle: {onEmit: () => this._flameAngleDeg + Phaser.Math.Between(-Player.NITRO_FLAME_SPREAD_DEG, Player.NITRO_FLAME_SPREAD_DEG)},
-            speed: {min: 150, max: 300},
-            scale: {start: 0.7, end: 0},
-            alpha: {start: 0.9, end: 0},
+            speed: {min: 250, max: 480},
+            scale: {start: 1.3, end: 0},
+            alpha: {start: 1, end: 0},
             tint: [0xffe066, 0xff9f1c, 0xf25f5c],
-            lifespan: 250,
-            frequency: 15,
+            lifespan: 380,
+            frequency: 6,
+            quantity: 2,
+            blendMode: Phaser.BlendModes.ADD,
+            emitting: false
+        });
+        this._nitroCore = this.scene.add.particles(0, 0, 'sprites', {
+            frame: 'star1',
+            angle: {onEmit: () => this._flameAngleDeg + Phaser.Math.Between(-Player.NITRO_CORE_SPREAD_DEG, Player.NITRO_CORE_SPREAD_DEG)},
+            speed: {min: 350, max: 550},
+            scale: {start: 0.8, end: 0},
+            alpha: {start: 1, end: 0},
+            tint: [0xffffff, 0x66ccff],
+            lifespan: 170,
+            frequency: 8,
+            blendMode: Phaser.BlendModes.ADD,
             emitting: false
         });
         this._barrier = this.scene.add.circle(this.x, this.y, Player.BARRIER_RADIUS, Player.BARRIER_COLOR, 0.08)
@@ -196,6 +225,7 @@ export default class Player extends Entity implements LaserBlocker {
             this._barrierUntil = 0;
             this._barrier.setVisible(false);
             this._nitroFlames.stop();
+            this._nitroCore.stop();
             this._laserGunUntil = 0;
             this.getComponent(LaserWeapon)?.clear();
         });
@@ -314,8 +344,10 @@ export default class Player extends Entity implements LaserBlocker {
         const wantsNitro: boolean = isMoving && (this._nitroKey?.isDown ?? false);
         if (!wantsNitro || this._nitroMs <= 0)
             this._isNitroActive = false;
-        else if (!this._isNitroActive && this.nitroRatio >= Player.NITRO_MIN_RATIO_TO_START)
+        else if (!this._isNitroActive && this.nitroRatio >= Player.NITRO_MIN_RATIO_TO_START) {
             this._isNitroActive = true;
+            this.playNitroKick();
+        }
 
         if (this._isNitroActive)
             this._nitroMs = Math.max(this._nitroMs - deltaTime, 0);
@@ -329,13 +361,52 @@ export default class Player extends Entity implements LaserBlocker {
         const backAngle: number = this._smoothedDirection.angle() + Math.PI;
         const back = new Phaser.Math.Vector2().setToPolar(backAngle, Player.NITRO_FLAME_OFFSET);
         this._nitroFlames.setPosition(this.x + back.x, this.y + back.y);
+        this._nitroCore.setPosition(this.x + back.x, this.y + back.y);
         this._flameAngleDeg = Phaser.Math.RadToDeg(backAngle);
         if (this._isNitroActive !== this._nitroFlames.emitting) {
-            if (this._isNitroActive)
+            if (this._isNitroActive) {
                 this._nitroFlames.start();
-            else
+                this._nitroCore.start();
+            } else {
                 this._nitroFlames.stop();
+                this._nitroCore.stop();
+            }
         }
+
+        const now: number = this.scene.time.now;
+        if (this._isNitroActive && now - this._lastNitroGhostTime > Player.NITRO_GHOST_INTERVAL_MS) {
+            this._lastNitroGhostTime = now;
+            this.spawnNitroGhost();
+        }
+    }
+
+    private spawnNitroGhost() {
+        const ghost = this.scene.add.image(this.x, this.y, this.texture.key, this.frame.name)
+            .setRotation(this.rotation).setAlpha(Player.NITRO_GHOST_ALPHA).setTint(Player.NITRO_GHOST_TINT)
+            .setBlendMode(Phaser.BlendModes.ADD);
+        this.scene.tweens.add({
+            targets: ghost,
+            alpha: 0,
+            scale: 0.8,
+            duration: Player.NITRO_GHOST_FADE_MS,
+            onComplete: () => ghost.destroy()
+        });
+    }
+
+    private playNitroKick() {
+        this._nitroFlames.explode(Player.NITRO_KICK_SPARKS);
+
+        const ring = this.scene.add.circle(this.x, this.y, Player.NITRO_KICK_RING_RADIUS)
+            .setStrokeStyle(6, Player.NITRO_GHOST_TINT, 0.9).setScale(0.2);
+        this.scene.tweens.add({
+            targets: ring,
+            scale: 1,
+            alpha: 0,
+            duration: Player.NITRO_KICK_RING_MS,
+            ease: 'Quad.easeOut',
+            onComplete: () => ring.destroy()
+        });
+        this.scene.cameras.main.shake(Player.NITRO_KICK_SHAKE_MS, Player.NITRO_KICK_SHAKE_INTENSITY);
     }
 
     public selectPlayerShip(playerShipDataId: number) {
