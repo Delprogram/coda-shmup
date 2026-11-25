@@ -21,12 +21,23 @@ export default class Player extends Entity {
     private static readonly MAX_BULLETS: number = 5;
     private static readonly SPREAD_DEG_PER_BULLET: number = 8;
 
+    private static readonly MAX_HEALTH: number = 10;
+    private static readonly RATE_OF_FIRE_S: number = 0.22;
+    // Time (ms) to reach ~63% of full speed when starting or stopping: small inertia, still responsive
+    private static readonly MOVE_SMOOTHING_MS: number = 60;
+    // Max aim turn speed, in radians per ms
+    private static readonly AIM_TURN_SPEED: number = 0.015;
+    private static readonly INVINCIBILITY_MS: number = 900;
+    private static readonly BLINK_MS: number = 90;
+
     private readonly _cursorKeys: Phaser.Types.Input.Keyboard.CursorKeys;
     // WASD (QWERTY) and ZQSD (AZERTY) both work, like in most FPS games
     private readonly _moveKeys: Record<'up' | 'down' | 'left' | 'right', Input.Keyboard.Key[]>;
     private _playerShipData: PlayerShipData;
     private _rateOfFire: number;
     private _lastShotTime: number;
+    private _lastHealth: number;
+    private readonly _smoothedDirection: Phaser.Math.Vector2 = new Phaser.Math.Vector2();
 
     constructor(scene: Scene, x: number, y: number) {
         super(scene, x, y, 'sprites');
@@ -51,7 +62,7 @@ export default class Player extends Entity {
     }
 
     public init(bulletsGroup: Phaser.Physics.Arcade.Group) {
-        this.addComponent(new Health(3, this));
+        this.addComponent(new Health(Player.MAX_HEALTH, this));
         this.addComponent(new Movement());
         this.addComponent(new Weapon(bulletsGroup, this._bulletData));
 
@@ -59,17 +70,36 @@ export default class Player extends Entity {
 
         this.selectPlayerShip(1);
 
-        this._rateOfFire = 0.5;
+        this._rateOfFire = Player.RATE_OF_FIRE_S;
         this._lastShotTime = 0;
+        this._lastHealth = Player.MAX_HEALTH;
 
-        this.getComponent(Health)?.on(Health.CHANGE_EVENT, () => {
-            this.arcadeBody.setEnable(false);
+        this.getComponent(Health)?.on(Health.CHANGE_EVENT, (current: number) => {
+            // CHANGE_EVENT also fires on heal: only a loss of health makes the player invincible
+            const wasHit: boolean = current < this._lastHealth;
+            this._lastHealth = current;
+            if (wasHit && current > 0)
+                this.startInvincibility();
+        });
+    }
 
-            this.scene.time.delayedCall(50, () => {
-                // A dead player stays disabled
-                if (this.active)
-                    this.arcadeBody.setEnable(true);
-            });
+    private startInvincibility() {
+        this.arcadeBody.setEnable(false);
+
+        const blink = this.scene.tweens.add({
+            targets: this,
+            alpha: 0.2,
+            duration: Player.BLINK_MS,
+            yoyo: true,
+            repeat: -1
+        });
+
+        this.scene.time.delayedCall(Player.INVINCIBILITY_MS, () => {
+            blink.stop();
+            this.setAlpha(1);
+            // A dead player stays disabled
+            if (this.active)
+                this.arcadeBody.setEnable(true);
         });
     }
 
@@ -93,9 +123,11 @@ export default class Player extends Entity {
             Number(isDown(this._moveKeys.right)) - Number(isDown(this._moveKeys.left)),
             Number(isDown(this._moveKeys.down)) - Number(isDown(this._moveKeys.up))
         ).normalize();
+        // Frame-rate independent smoothing toward the wanted direction
+        this._smoothedDirection.lerp(direction, 1 - Math.exp(-deltaTime / Player.MOVE_SMOOTHING_MS));
         const movement = this.getComponent(Movement);
-        movement?.moveHorizontally(this, direction.x * deltaTime);
-        movement?.moveVertically(this, direction.y * deltaTime);
+        movement?.moveHorizontally(this, this._smoothedDirection.x * deltaTime);
+        movement?.moveVertically(this, this._smoothedDirection.y * deltaTime);
 
         // Stop player from going offscreen
         const camera = this.scene.cameras.main;
@@ -105,7 +137,8 @@ export default class Player extends Entity {
         // Aim at the mouse, once it has moved over the game (before that, keep facing up)
         const pointer = this.scene.input.activePointer;
         if (pointer.moveTime > 0) {
-            this.rotation = Phaser.Math.Angle.Between(this.x, this.y, pointer.worldX, pointer.worldY);
+            const aimRotation: number = Phaser.Math.Angle.Between(this.x, this.y, pointer.worldX, pointer.worldY);
+            this.rotation = Phaser.Math.Angle.RotateTo(this.rotation, aimRotation, Player.AIM_TURN_SPEED * deltaTime);
         }
 
         // Press space or hold the left mouse button to shoot toward the mouse
