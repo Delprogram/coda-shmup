@@ -1,6 +1,7 @@
 import {GameObjects, Scenes, Scene} from "phaser";
 import Health from "../components/Health.ts";
 import HealthBar from "../components/HealthBar.ts";
+import Skills from "../components/Skills.ts";
 import Boss from "../entities/Boss.ts";
 import Player from "../entities/Player.ts";
 import GameConstants from "../GameConstants.ts";
@@ -14,12 +15,13 @@ export default class MainUIScene extends Scene {
     private _healthBarFill: GameObjects.Rectangle;
     private _healthBarText: GameObjects.Text;
     private _scoreText: GameObjects.BitmapText;
-    private _comboText: GameObjects.BitmapText;
+    // The bitmap font only has digits: words use the TTF font
+    private _comboText: GameObjects.Text;
     private static readonly COMBO_POP_SCALE: number = 1.4;
     private static readonly COMBO_POP_MS: number = 120;
 
     private static readonly LEVEL_TEXT_Y: number = 190;
-    private static readonly BOSS_BAR_Y: number = 270;
+    private static readonly BOSS_BAR_Y: number = 320;
     private static readonly BOSS_BAR_WIDTH: number = 800;
     private static readonly BOSS_BAR_HEIGHT: number = 28;
     private static readonly BOSS_BAR_COLOR: number = 0xb44cff;
@@ -27,13 +29,23 @@ export default class MainUIScene extends Scene {
     private static readonly BANNER_IN_MS: number = 250;
     private static readonly BANNER_HOLD_MS: number = 1500;
     private static readonly BANNER_OUT_MS: number = 400;
-    private static readonly WARNING_COLOR: number = 0xf25f5c;
+    private static readonly WARNING_COLOR: string = '#f25f5c';
 
-    private _levelText: GameObjects.BitmapText;
-    private _bannerText: GameObjects.BitmapText;
+    private _levelText: GameObjects.Text;
+    private _bannerText: GameObjects.Text;
     private _bossBar: GameObjects.Container;
     private _bossBarFill: GameObjects.Rectangle;
     private _bossHealth: Health | null = null;
+    private _bossLabel: GameObjects.Text;
+
+    private static readonly SKILL_SLOT_SIZE: number = 120;
+    private static readonly SKILL_SLOT_GAP: number = 20;
+    private static readonly SKILL_BAR_MARGIN: number = 40;
+    private static readonly SKILL_READY_COLOR: number = 0x66ccff;
+    private static readonly SKILL_ULTIMATE_COLOR: number = 0xffb000;
+
+    private _player: Player | null = null;
+    private _skillSlots: {border: GameObjects.Rectangle, cooldown: GameObjects.Rectangle}[] = [];
 
     constructor() {
         super(GameConstants.SceneKeys.MAIN_UI);
@@ -79,22 +91,27 @@ export default class MainUIScene extends Scene {
         this._scoreText = this.add.bitmapText(this.scale.width - 64, 64, "future-bmp", scoreStr, 128)
             .setOrigin(1, 0);
 
-        this._comboText = this.add.bitmapText(this.scale.width - 64, this._scoreText.y + this._scoreText.height + 16,
-            "future-bmp", "", 64).setOrigin(1, 0).setTint(0xffe066);
+        this._comboText = this.add.text(this.scale.width - 64, this._scoreText.y + this._scoreText.height + 16, "",
+            {fontSize: '56px', color: '#ffe066', fontFamily: 'future'}).setOrigin(1, 0);
 
         const centerX: number = this.scale.width / 2;
-        this._levelText = this.add.bitmapText(centerX, MainUIScene.LEVEL_TEXT_Y, "future-bmp",
-            "LEVEL " + (this.registry.get(RegistryConstants.Keys.LEVEL) ?? 1), 48).setOrigin(0.5, 0);
-        this._bannerText = this.add.bitmapText(centerX, this.scale.height * MainUIScene.BANNER_Y_RATIO, "future-bmp", "", 112)
-            .setOrigin(0.5).setCenterAlign().setAlpha(0);
+        this._levelText = this.add.text(centerX, MainUIScene.LEVEL_TEXT_Y,
+            "LEVEL " + (this.registry.get(RegistryConstants.Keys.LEVEL) ?? 1),
+            {fontSize: '44px', color: '#fff', fontFamily: 'future'}).setOrigin(0.5, 0);
+        this._bannerText = this.add.text(centerX, this.scale.height * MainUIScene.BANNER_Y_RATIO, "",
+            {fontSize: '110px', color: '#fff', fontFamily: 'future', align: 'center', stroke: '#000', strokeThickness: 10})
+            .setOrigin(0.5).setAlpha(0);
 
-        const bossLabel = this.add.bitmapText(0, -MainUIScene.BOSS_BAR_HEIGHT, "future-bmp", "BOSS", 40).setOrigin(0.5, 1);
+        const bossLabel = this._bossLabel = this.add.text(0, -MainUIScene.BOSS_BAR_HEIGHT, "BOSS",
+            {fontSize: '36px', color: '#fff', fontFamily: 'future'}).setOrigin(0.5, 1);
         const bossBarBackground = this.add.rectangle(0, 0, MainUIScene.BOSS_BAR_WIDTH, MainUIScene.BOSS_BAR_HEIGHT, 0x000000, 0.6)
             .setStrokeStyle(4, 0xffffff, 0.8);
         this._bossBarFill = this.add.rectangle(-MainUIScene.BOSS_BAR_WIDTH / 2, 0, MainUIScene.BOSS_BAR_WIDTH,
             MainUIScene.BOSS_BAR_HEIGHT, MainUIScene.BOSS_BAR_COLOR).setOrigin(0, 0.5);
         this._bossBar = this.add.container(centerX, MainUIScene.BOSS_BAR_Y + MainUIScene.BOSS_BAR_HEIGHT,
             [bossLabel, bossBarBackground, this._bossBarFill]).setVisible(false);
+
+        this.createSkillBar();
 
         this.scene.bringToTop();
 
@@ -121,7 +138,7 @@ export default class MainUIScene extends Scene {
 
     private onLevelChanged(_: any, level: number) {
         this._levelText.setText("LEVEL " + level);
-        this.showBanner("LEVEL " + level, 0xffffff);
+        this.showBanner("LEVEL " + level, '#ffffff');
     }
 
     private onBossIncoming() {
@@ -135,6 +152,7 @@ export default class MainUIScene extends Scene {
         this._bossHealth?.on(Health.CHANGE_EVENT, this.onBossHealthChanged, this);
 
         this._bossBarFill.scaleX = 1;
+        this._bossLabel.setText(boss.title);
         this._bossBar.setVisible(true);
     }
 
@@ -147,9 +165,9 @@ export default class MainUIScene extends Scene {
             this._bossBar.setVisible(false);
     }
 
-    private showBanner(text: string, color: number) {
+    private showBanner(text: string, color: string) {
         this.tweens.killTweensOf(this._bannerText);
-        this._bannerText.setText(text).setTint(color).setAlpha(0).setScale(1.5);
+        this._bannerText.setText(text).setColor(color).setAlpha(0).setScale(1.5);
         this.tweens.chain({
             targets: this._bannerText,
             tweens: [
@@ -159,7 +177,43 @@ export default class MainUIScene extends Scene {
         });
     }
 
+    private createSkillBar() {
+        // Slot order matches Skills: shockwave, shield, overdrive (ultimate)
+        const labels = [['F', 'SHOCKWAVE'], ['C', 'SHIELD'], ['X', 'OVERDRIVE']];
+        const size: number = MainUIScene.SKILL_SLOT_SIZE;
+        // Bottom-left corner, so it hides as little of the play area as possible
+        const y: number = this.scale.height - MainUIScene.SKILL_BAR_MARGIN - size / 2;
+
+        this._skillSlots = labels.map(([key, name], i) => {
+            const x: number = MainUIScene.SKILL_BAR_MARGIN + size / 2 + i * (size + MainUIScene.SKILL_SLOT_GAP);
+            const border = this.add.rectangle(x, y, size, size, 0x000000, 0.5).setStrokeStyle(6, 0xffffff, 0.4);
+            // Dark overlay that shrinks from the top while the skill recharges
+            const cooldown = this.add.rectangle(x, y + size / 2, size, size, 0x000000, 0.6).setOrigin(0.5, 1);
+            this.add.text(x, y - 10, key, {fontSize: '52px', color: '#fff', fontFamily: 'future'}).setOrigin(0.5);
+            this.add.text(x, y + size / 2 - 10, name, {fontSize: '14px', color: '#ddd', fontFamily: 'future'})
+                .setOrigin(0.5, 1);
+            return {border, cooldown};
+        });
+    }
+
+    update() {
+        const player = this._player;
+        if (!player?.scene)
+            return;
+
+        const states = player.getComponent(Skills)?.states(player.scene.time.now) ?? [];
+        states.forEach((state, i) => {
+            const slot = this._skillSlots[i];
+            const ready: boolean = state.readiness >= 1;
+            const readyColor: number = state.id === 'overdrive' ? MainUIScene.SKILL_ULTIMATE_COLOR : MainUIScene.SKILL_READY_COLOR;
+            slot.cooldown.scaleY = 1 - state.readiness;
+            slot.border.setStrokeStyle(6, ready ? readyColor : 0xffffff, ready ? 1 : 0.4);
+        });
+    }
+
     private onPlayerSpawned(player: Player) {
+        this._player = player;
+
         // A restart (R key) can happen in the middle of a boss fight
         this._bossBar.setVisible(false);
 
