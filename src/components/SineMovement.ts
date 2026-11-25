@@ -8,9 +8,15 @@ export default class SineMovement implements IComponent {
     public enabled: boolean = true;
 
     private readonly _data: SineMovementData;
-    private readonly _origin: Phaser.Math.Vector2 = new Phaser.Math.Vector2();
+    // Center line of the wave: it moves forward and can steer toward a target, the entity oscillates around it
+    private readonly _center: Phaser.Math.Vector2 = new Phaser.Math.Vector2();
     private _rotation: number = 0;
     private _elapsedMs: number = 0;
+
+    // Travel direction, the entity faces it so its weapon shoots forward
+    public get rotation(): number {
+        return this._rotation;
+    }
 
     public constructor(data: SineMovementData) {
         this._data = data;
@@ -18,24 +24,34 @@ export default class SineMovement implements IComponent {
 
     // Must be called when a pooled entity is reused, so the wave restarts from its new spawn position and direction
     public reset(x: number, y: number, rotation: number) {
-        this._origin.set(x, y);
+        this._center.set(x, y);
         this._rotation = rotation;
         this._elapsedMs = 0;
     }
 
-    public move(entity: Entity, deltaTime: number) {
+    // speedMultiplier scales the JSON speed; with a target, the wave turns toward it by at most turnSpeed rad/ms
+    public move(entity: Entity, deltaTime: number, speedMultiplier: number = 1,
+                target: Entity | null = null, turnSpeed: number = 0) {
         if (!this.enabled)
             return;
 
         this._elapsedMs += deltaTime;
         const phase: number = Phaser.Math.PI2 * this._data.frequency * this._elapsedMs / SineMovement.MS_PER_SECOND;
 
-        // Travel along the spawn direction, oscillating perpendicular to it
-        const distance: number = this._data.speed * this._elapsedMs;
-        const offset: number = this._data.amplitude * Math.sin(phase);
+        if (target?.active) {
+            const toTarget: number = Phaser.Math.Angle.Between(this._center.x, this._center.y, target.x, target.y);
+            this._rotation = Phaser.Math.Angle.RotateTo(this._rotation, toTarget, turnSpeed * deltaTime);
+        }
+
+        // Move the center forward, then oscillate perpendicular to the travel direction
         const forwardX: number = Math.cos(this._rotation);
         const forwardY: number = Math.sin(this._rotation);
-        entity.x = this._origin.x + forwardX * distance - forwardY * offset;
-        entity.y = this._origin.y + forwardY * distance + forwardX * offset;
+        const distance: number = this._data.speed * speedMultiplier * deltaTime;
+        this._center.x += forwardX * distance;
+        this._center.y += forwardY * distance;
+
+        const offset: number = this._data.amplitude * Math.sin(phase);
+        entity.x = this._center.x - forwardY * offset;
+        entity.y = this._center.y + forwardX * offset;
     }
 }

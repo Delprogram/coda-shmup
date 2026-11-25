@@ -5,13 +5,17 @@ import HealthBar from "../components/HealthBar.ts";
 import Movement from "../components/Movement.ts";
 import Weapon from "../components/Weapon.ts";
 
-// Kamikaze UFO: charges at the player, turning toward it for a while, then keeps going straight so it can be dodged.
+// Kamikaze UFO: chases the player wherever it goes and speeds up the longer it lives.
 // Every level makes it tougher: more health, faster, turns quicker, shoots more often with faster bullets.
 export default class Enemy extends Entity {
     private static readonly SPEED: number = 0.32;
     // Max turn speed toward the target, in radians per ms: low enough to be dodged with a side step
     private static readonly HOMING_TURN_SPEED: number = 0.0018;
-    private static readonly HOMING_MS: number = 4500;
+    // Acceleration while alive: +ACCELERATION_PER_S of its speed every second, up to MAX_ACCELERATION.
+    // Turning speeds up as much, so a faster enemy can still follow the player.
+    private static readonly ACCELERATION_PER_S: number = 0.25;
+    private static readonly MAX_ACCELERATION: number = 2.5;
+    private static readonly MS_PER_SECOND: number = 1000;
     private static readonly BULLET_SPEED: number = 512;
     private static readonly MIN_SHOOT_DELAY_MS: number = 2000;
     private static readonly MAX_SHOOT_DELAY_MS: number = 3000;
@@ -35,7 +39,7 @@ export default class Enemy extends Entity {
     private _shootTimerConfig: Phaser.Types.Time.TimerEventConfig;
     private _shootTimer: Phaser.Time.TimerEvent;
     private _target: Entity | null = null;
-    private _homingUntil: number = 0;
+    private _aliveMs: number = 0;
     private _turnSpeed: number = Enemy.HOMING_TURN_SPEED;
 
     public init(bulletsGroup: Phaser.Physics.Arcade.Group) {
@@ -94,7 +98,7 @@ export default class Enemy extends Entity {
         this.enableBody(true, x, y, true, true);
         this.setRotation(rotation);
         this._target = target;
-        this._homingUntil = this.scene.time.now + Enemy.HOMING_MS;
+        this._aliveMs = 0;
 
         // Pooled enemy: every stat is set again from the current level, nothing is kept from its previous life
         const bonus: number = level - 1;
@@ -138,15 +142,18 @@ export default class Enemy extends Entity {
             this.disable();
         }
 
-        if (this._target?.active && this.scene.time.now < this._homingUntil) {
+        this._aliveMs += deltaTime;
+        const acceleration: number = Math.min(1 + Enemy.ACCELERATION_PER_S * this._aliveMs / Enemy.MS_PER_SECOND,
+            Enemy.MAX_ACCELERATION);
+
+        if (this._target?.active) {
             const toTarget: number = Phaser.Math.Angle.Between(this.x, this.y, this._target.x, this._target.y);
-            this.rotation = Phaser.Math.Angle.RotateTo(this.rotation, toTarget, this._turnSpeed * deltaTime);
+            this.rotation = Phaser.Math.Angle.RotateTo(this.rotation, toTarget, this._turnSpeed * acceleration * deltaTime);
         }
 
-        if (!this.isTinted)
-            this.getComponent(Movement)?.moveForward(this, deltaTime);
-        else
-            this.getComponent(Movement)?.moveForward(this, deltaTime * 0.5);
+        // Slowed down while flashing from a hit
+        const hitSlowdown: number = this.isTinted ? 0.5 : 1;
+        this.getComponent(Movement)?.moveForward(this, deltaTime * acceleration * hitSlowdown);
         this.getComponent(HealthBar)?.followEntity();
     }
 }

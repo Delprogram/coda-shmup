@@ -18,6 +18,13 @@ export default class SineEnemy extends Entity {
     private static readonly HEALTH_PER_LEVEL: number = 1;
     private static readonly BULLETS_PER_LEVEL: number = 1;
     private _level: number = 1;
+    // Chases the player and speeds up the longer it lives, like the red UFO
+    private static readonly TURN_SPEED: number = 0.0012;
+    private static readonly ACCELERATION_PER_S: number = 0.2;
+    private static readonly MAX_ACCELERATION: number = 2.5;
+    private static readonly MS_PER_SECOND: number = 1000;
+    private _target: Entity | null = null;
+    private _aliveMs: number = 0;
 
     public init(bulletsGroup: Phaser.Physics.Arcade.Group) {
         this._data = this.scene.cache.json.get(SineEnemy.DATA_KEY) as SineEnemyData;
@@ -60,8 +67,10 @@ export default class SineEnemy extends Entity {
         this._shootTimer = this.scene.time.addEvent(this._shootTimerConfig);
     }
 
-    public enable(x: number, y: number, rotation: number, level: number) {
+    public enable(x: number, y: number, rotation: number, level: number, target: Entity) {
         this._level = level;
+        this._target = target;
+        this._aliveMs = 0;
         this.enableBody(true, x, y, true, true);
         this.setRotation(rotation);
         this.setTint(this._data.visual.tint);
@@ -94,7 +103,13 @@ export default class SineEnemy extends Entity {
             this.disable();
         }
 
-        this.getComponent(SineMovement)?.move(this, deltaTime);
+        this._aliveMs += deltaTime;
+        const acceleration: number = Math.min(1 + SineEnemy.ACCELERATION_PER_S * this._aliveMs / SineEnemy.MS_PER_SECOND,
+            SineEnemy.MAX_ACCELERATION);
+        const movement = this.getComponent(SineMovement);
+        movement?.move(this, deltaTime, acceleration, this._target, SineEnemy.TURN_SPEED * acceleration);
+        if (movement)
+            this.rotation = movement.rotation;
         this.getComponent(HealthBar)?.followEntity();
     }
 }

@@ -453,7 +453,7 @@ export default class EntityManager extends Plugins.ScenePlugin {
         }
 
         const spawn = this.randomEdgeSpawn(enemy.displayWidth);
-        enemy.enable(spawn.x, spawn.y, spawn.rotation, this.currentLevel());
+        enemy.enable(spawn.x, spawn.y, spawn.rotation, this.currentLevel(), this._player);
 
         this.game!.events.emit(GameConstants.Events.ENEMY_SPAWNED_EVENT, enemy);
     }
