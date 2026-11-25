@@ -5,7 +5,7 @@ import Boss from "../entities/Boss.ts";
 import Bullet from "../entities/Bullet.ts";
 import Enemy from "../entities/Enemy.ts";
 import Entity from "../entities/Entity.ts";
-import Pickup from "../entities/Pickup.ts";
+import Pickup, {PickupKind} from "../entities/Pickup.ts";
 import SineEnemy from "../entities/SineEnemy.ts";
 import {SineEnemyData} from "../gameData/SineEnemyData.ts";
 import Player from "../entities/Player.ts";
@@ -47,10 +47,12 @@ export default class EntityManager extends Plugins.ScenePlugin {
     private static readonly PLAYER_SPAWN_BOTTOM_OFFSET: number = 400;
     private static readonly MAX_ACTIVE_ENEMIES: number = 8;
 
-    // Laser shield pickups appear at random places while a laser boss is alive
+    // Laser shield and (rarely) laser gun pickups appear at random places, only while a laser boss is alive
     private static readonly SHIELD_PICKUP_INTERVAL_MS: number = 4000;
     private static readonly MAX_SHIELD_PICKUPS: number = 2;
-    private static readonly SHIELD_PICKUP_MARGIN: number = 250;
+    private static readonly LASER_GUN_PICKUP_INTERVAL_MS: number = 15000;
+    private static readonly MAX_LASER_GUN_PICKUPS: number = 1;
+    private static readonly BOSS_PICKUP_MARGIN: number = 250;
     private static readonly BOSS_ULTIMATE_KILLS: number = 15;
     private static readonly SPAWN_SPEEDUP_PER_LEVEL: number = 0.3;
 
@@ -62,7 +64,7 @@ export default class EntityManager extends Plugins.ScenePlugin {
 
     private _levelKills: number = 0;
     private _bossFight: boolean = false;
-    private _shieldPickupTimer: Phaser.Time.TimerEvent | null = null;
+    private _bossPickupTimers: Phaser.Time.TimerEvent[] = [];
 
     // Chance for a destroyed enemy to drop a health pickup: tougher enemies drop more often
     private static readonly ENEMY_DROP_CHANCE: number = 0.08;
@@ -134,7 +136,7 @@ export default class EntityManager extends Plugins.ScenePlugin {
         this._comboResetTimer = null;
         this._levelKills = 0;
         this._bossFight = false;
-        this._shieldPickupTimer = null;
+        this._bossPickupTimers = [];
 
         // Spawn enemies indefinitely
         this._spawnTimers.push(this.scene!.time.addEvent({
@@ -180,6 +182,9 @@ export default class EntityManager extends Plugins.ScenePlugin {
             callback: () => this.spawnSineEnemy(sineEnemyData),
             loop: true
         }));
+
+        this._player.setLaserTargets(() => [this._enemies, this._sineEnemies, this._bosses]
+            .flatMap(group => group.getMatching('active', true) as Entity[]));
 
         console.log("[EntityManager] Enemies initialized");
 
@@ -230,10 +235,11 @@ export default class EntityManager extends Plugins.ScenePlugin {
 
         this.scene!.physics.add.overlap(this._player, this._pickups, (player, pickup) => {
             (pickup as Pickup).disable();
-            if ((pickup as Pickup).kind === 'health')
-                (player as Player).getComponent(Health)?.heal(Pickup.HEAL_AMOUNT);
-            else
-                (player as Player).activateDeflector();
+            switch ((pickup as Pickup).kind) {
+                case 'health': (player as Player).getComponent(Health)?.heal(Pickup.HEAL_AMOUNT); break;
+                case 'laserShield': (player as Player).activateDeflector(); break;
+                case 'laserGun': (player as Player).activateLaserGun(); break;
+            }
         });
 
         console.log("[EntityManager] Group collisions initialized");
@@ -282,18 +288,18 @@ export default class EntityManager extends Plugins.ScenePlugin {
         scene.cameras.main.shake(150, 0.01);
     }
 
-    private spawnShieldPickup() {
-        const activeShields: number = (this._pickups.getMatching('active', true) as Pickup[])
-            .filter(pickup => pickup.kind === 'laserShield').length;
-        if (activeShields >= EntityManager.MAX_SHIELD_PICKUPS)
+    private spawnBossPickup(kind: PickupKind, maxActive: number) {
+        const activeOfKind: number = (this._pickups.getMatching('active', true) as Pickup[])
+            .filter(pickup => pickup.kind === kind).length;
+        if (activeOfKind >= maxActive)
             return;
 
         const camera = this.scene!.cameras.main;
-        const margin: number = EntityManager.SHIELD_PICKUP_MARGIN;
+        const margin: number = EntityManager.BOSS_PICKUP_MARGIN;
         // Lower part of the screen: the boss hovers at the top
         const x: number = Phaser.Math.Between(margin, camera.width - margin);
         const y: number = Phaser.Math.Between(camera.height / 2, camera.height - margin);
-        (this._pickups.get() as Pickup | null)?.enable(x, y, 'laserShield');
+        (this._pickups.get() as Pickup | null)?.enable(x, y, kind);
     }
 
     private dropHealthPickup(x: number, y: number) {
@@ -322,13 +328,20 @@ export default class EntityManager extends Plugins.ScenePlugin {
             this.game!.events.emit(GameConstants.Events.BOSS_SPAWNED_EVENT, boss);
 
             if (boss.hasLasers) {
-                this.spawnShieldPickup();
-                this._shieldPickupTimer = this.scene!.time.addEvent({
-                    delay: EntityManager.SHIELD_PICKUP_INTERVAL_MS,
-                    callback: this.spawnShieldPickup,
-                    callbackScope: this,
-                    loop: true
-                });
+                this.spawnBossPickup('laserShield', EntityManager.MAX_SHIELD_PICKUPS);
+                // The laser gun is rare: the first one only shows up after a full interval
+                this._bossPickupTimers = [
+                    this.scene!.time.addEvent({
+                        delay: EntityManager.SHIELD_PICKUP_INTERVAL_MS,
+                        callback: () => this.spawnBossPickup('laserShield', EntityManager.MAX_SHIELD_PICKUPS),
+                        loop: true
+                    }),
+                    this.scene!.time.addEvent({
+                        delay: EntityManager.LASER_GUN_PICKUP_INTERVAL_MS,
+                        callback: () => this.spawnBossPickup('laserGun', EntityManager.MAX_LASER_GUN_PICKUPS),
+                        loop: true
+                    }),
+                ];
             }
         });
     }
@@ -348,8 +361,8 @@ export default class EntityManager extends Plugins.ScenePlugin {
             this.dropHealthPickup(boss.x + Phaser.Math.Between(-spread, spread), boss.y + Phaser.Math.Between(-spread, spread));
         }
 
-        this._shieldPickupTimer?.remove();
-        this._shieldPickupTimer = null;
+        this._bossPickupTimers.forEach(timer => timer.remove());
+        this._bossPickupTimers = [];
         this._levelKills = 0;
         this._bossFight = false;
         scene.registry.set(RegistryConstants.Keys.LEVEL, level + 1);

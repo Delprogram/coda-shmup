@@ -1,7 +1,7 @@
 import Entity from './Entity.ts';
 import Movement from "../components/Movement.ts";
 
-export type PickupKind = 'health' | 'laserShield';
+export type PickupKind = 'health' | 'laserShield' | 'laserGun';
 
 type PickupStyle = {
     frame: string;
@@ -11,7 +11,8 @@ type PickupStyle = {
     lifetimeMs: number;
 };
 
-// Item the player picks up on contact: health (dropped by enemies) or a laser shield (appears during laser boss fights)
+// Item the player picks up on contact: health (dropped by enemies), or a laser shield / laser gun (only during
+// laser boss fights)
 export default class Pickup extends Entity {
     public static readonly HEAL_AMOUNT: number = 2;
     private static readonly BASE_SCALE: number = 2;
@@ -24,6 +25,7 @@ export default class Pickup extends Entity {
     private static readonly STYLES: Record<PickupKind, PickupStyle> = {
         health: {frame: 'playerLife1_blue', tint: 0x5bd75b, fallSpeed: 0.25, lifetimeMs: 0},
         laserShield: {frame: 'star2', tint: 0x66ccff, fallSpeed: 0, lifetimeMs: 9000},
+        laserGun: {frame: 'star3', tint: 0xff66ff, fallSpeed: 0, lifetimeMs: 7000},
     };
 
     private _pulse: Phaser.Tweens.Tween;

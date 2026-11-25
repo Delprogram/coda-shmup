@@ -1,7 +1,7 @@
 import type {BulletData} from '../gameData/BulletData.ts';
 import Entity from './Entity.ts';
 import Health from "../components/Health.ts";
-import LaserWeapon, {LaserBlocker} from "../components/LaserWeapon.ts";
+import LaserWeapon, {LaserBlocker, LaserStyle} from "../components/LaserWeapon.ts";
 import Movement from "../components/Movement.ts";
 import Weapon from "../components/Weapon.ts";
 
@@ -42,6 +42,7 @@ export default class Boss extends Entity {
     private static readonly FULL_CIRCLE_DEG: number = 360;
 
     // Laser patterns
+    private static readonly LASER_STYLE: LaserStyle = {color: 0xff3355, beamWidth: 46, coreWidth: 16, damage: 2};
     private static readonly LASER_TELEGRAPH_MS: number = 750;
     private static readonly LASER_ACTIVE_MS: number = 500;
     private static readonly LASER_FAN_BASE_COUNT: number = 3;
@@ -89,7 +90,7 @@ export default class Boss extends Entity {
         this.addComponent(new Health(Boss.BASE_HEALTH, this));
         this.addComponent(new Movement(Boss.ENTRY_SPEED));
         this.addComponent(new Weapon(bulletsGroup, this._bulletData));
-        this.addComponent(new LaserWeapon(this, () => this._target));
+        this.addComponent(new LaserWeapon(this, () => [this._target], Boss.LASER_STYLE));
 
         this.setScale(Boss.SCALE);
         // Radius is in unscaled frame pixels, the arcade body follows the sprite scale
