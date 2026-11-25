@@ -36,6 +36,13 @@ export default class Entity extends Physics.Arcade.Sprite {
         return false;
     }
 
+    // True once the entity is further than `margin` pixels outside the screen, on any side
+    public isOutOfScreen(margin: number): boolean {
+        const camera = this.scene.cameras.main;
+        return this.x < -margin || this.x > camera.width + margin
+            || this.y < -margin || this.y > camera.height + margin;
+    }
+
     public getComponent<T extends IComponent>(componentType: new (...args: any[]) => T): T | undefined {
         return this._components.find(component => component instanceof componentType) as T;
     }

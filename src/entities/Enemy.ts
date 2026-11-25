@@ -66,8 +66,9 @@ export default class Enemy extends Entity {
         this.arcadeBody.setCircle(this.displayWidth / 2);
     }
 
-    public enable(x: number, y: number) {
-        this.enableBody(true, x, y - this.displayHeight, true, true);
+    public enable(x: number, y: number, rotation: number) {
+        this.enableBody(true, x, y, true, true);
+        this.setRotation(rotation);
         this._shootTimer.reset(this._shootTimerConfig);
 
         // Restore health, in case the enemy is reused from the pool, without emitting events
@@ -96,14 +97,14 @@ export default class Enemy extends Entity {
     preUpdate(timeSinceLaunch: number, deltaTime: number) {
         super.preUpdate(timeSinceLaunch, deltaTime)
 
-        // Destroy entities when out of screen
-        if (this.y > this.scene.cameras.main.height + this.displayHeight) {
+        // Recycle once it has crossed the screen (it spawns just outside, so the margin must be larger)
+        if (this.isOutOfScreen(this.displayWidth * 2)) {
             this.disable();
         }
 
         if (!this.isTinted)
-            this.getComponent(Movement)?.moveVertically(this, deltaTime);
+            this.getComponent(Movement)?.moveForward(this, deltaTime);
         else
-            this.getComponent(Movement)?.moveVertically(this, deltaTime * 0.5);
+            this.getComponent(Movement)?.moveForward(this, deltaTime * 0.5);
     }
 }

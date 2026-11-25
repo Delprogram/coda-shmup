@@ -50,6 +50,10 @@ export default class EntityManager extends Plugins.ScenePlugin {
     private static readonly SPAWN_SPEEDUP_PER_POINT: number = 0.008;
     private static readonly MAX_SPAWN_SPEEDUP: number = 3;
 
+    // Enemies aim at a random point in the central area of the screen (as a ratio of its size)
+    private static readonly SPAWN_TARGET_MIN: number = 0.3;
+    private static readonly SPAWN_TARGET_MAX: number = 0.7;
+
     constructor(scene: Scene, pluginManager: Plugins.PluginManager) {
         super(scene, pluginManager, EntityManager.PLUGIN_KEY);
 
@@ -210,6 +214,23 @@ export default class EntityManager extends Plugins.ScenePlugin {
         this._spawnTimers.forEach(timer => timer.timeScale = speedup);
     }
 
+    // Random point just outside one of the 4 screen edges, facing a random point near the center
+    private randomEdgeSpawn(margin: number): {x: number, y: number, rotation: number} {
+        const camera = this.scene!.cameras.main;
+        let x: number;
+        let y: number;
+        switch (Phaser.Math.Between(0, 3)) {
+            case 0: x = Phaser.Math.Between(0, camera.width); y = -margin; break;
+            case 1: x = Phaser.Math.Between(0, camera.width); y = camera.height + margin; break;
+            case 2: x = -margin; y = Phaser.Math.Between(0, camera.height); break;
+            default: x = camera.width + margin; y = Phaser.Math.Between(0, camera.height); break;
+        }
+
+        const targetX: number = camera.width * Phaser.Math.FloatBetween(EntityManager.SPAWN_TARGET_MIN, EntityManager.SPAWN_TARGET_MAX);
+        const targetY: number = camera.height * Phaser.Math.FloatBetween(EntityManager.SPAWN_TARGET_MIN, EntityManager.SPAWN_TARGET_MAX);
+        return {x, y, rotation: Phaser.Math.Angle.Between(x, y, targetX, targetY)};
+    }
+
     private spawnEnemy() {
         this.updateDifficulty();
 
@@ -222,7 +243,8 @@ export default class EntityManager extends Plugins.ScenePlugin {
             return;
         }
 
-        enemy.enable(Phaser.Math.Between(64, this.scene!.cameras.main.width - 64), 0);
+        const spawn = this.randomEdgeSpawn(enemy.displayWidth);
+        enemy.enable(spawn.x, spawn.y, spawn.rotation);
 
         this.game!.events.emit(GameConstants.Events.ENEMY_SPAWNED_EVENT, enemy);
 
@@ -241,12 +263,8 @@ export default class EntityManager extends Plugins.ScenePlugin {
             return;
         }
 
-        // Keep the whole wave on screen; fall back to the center if the amplitude is wider than the screen
-        const width: number = this.scene!.cameras.main.width;
-        const margin: number = data.movement.amplitude + enemy.displayWidth / 2;
-        const minX: number = Math.min(margin, width / 2);
-        const maxX: number = Math.max(width - margin, width / 2);
-        enemy.enable(Phaser.Math.Between(minX, maxX), 0);
+        const spawn = this.randomEdgeSpawn(enemy.displayWidth);
+        enemy.enable(spawn.x, spawn.y, spawn.rotation);
 
         this.game!.events.emit(GameConstants.Events.ENEMY_SPAWNED_EVENT, enemy);
     }

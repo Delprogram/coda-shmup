@@ -56,11 +56,12 @@ export default class SineEnemy extends Entity {
         this._shootTimer = this.scene.time.addEvent(this._shootTimerConfig);
     }
 
-    public enable(x: number, y: number) {
-        this.enableBody(true, x, y - this.displayHeight, true, true);
+    public enable(x: number, y: number, rotation: number) {
+        this.enableBody(true, x, y, true, true);
+        this.setRotation(rotation);
         this.setTint(this._data.visual.tint);
         this._shootTimer.reset(this._shootTimerConfig);
-        this.getComponent(SineMovement)?.reset(x);
+        this.getComponent(SineMovement)?.reset(x, y, rotation);
 
         // Restore health, in case the enemy is reused from the pool, without emitting events
         const health = this.getComponent(Health);
@@ -83,8 +84,8 @@ export default class SineEnemy extends Entity {
     preUpdate(timeSinceLaunch: number, deltaTime: number) {
         super.preUpdate(timeSinceLaunch, deltaTime);
 
-        // Recycle when out of screen
-        if (this.y > this.scene.cameras.main.height + this.displayHeight) {
+        // Recycle once it has crossed the screen; the wave amplitude can push it further out
+        if (this.isOutOfScreen(this._data.movement.amplitude + this.displayWidth * 2)) {
             this.disable();
         }
 

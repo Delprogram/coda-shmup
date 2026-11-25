@@ -23,6 +23,15 @@ export default class Movement implements IComponent {
         entity.x += this._speed * deltaTime;
     }
 
+    // Move along the entity facing direction
+    public moveForward(entity: Entity, deltaTime: number) {
+        if (!this.enabled)
+            return;
+
+        entity.x += Math.cos(entity.rotation) * this._speed * deltaTime;
+        entity.y += Math.sin(entity.rotation) * this._speed * deltaTime;
+    }
+
     public moveVertically(entity: Entity, deltaTime: number) {
         if (!this.enabled)
             return;
