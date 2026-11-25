@@ -3,6 +3,7 @@ import Health from "../components/Health.ts";
 import Bullet from "../entities/Bullet.ts";
 import Enemy from "../entities/Enemy.ts";
 import Entity from "../entities/Entity.ts";
+import HealthPickup from "../entities/HealthPickup.ts";
 import SineEnemy from "../entities/SineEnemy.ts";
 import {SineEnemyData} from "../gameData/SineEnemyData.ts";
 import Player from "../entities/Player.ts";
@@ -30,6 +31,11 @@ export default class EntityManager extends Plugins.ScenePlugin {
     private _enemyBullets: Physics.Arcade.Group;
     private _sineEnemies: Physics.Arcade.Group;
     private _spawnTimers: Phaser.Time.TimerEvent[] = [];
+    private _healthPickups: Physics.Arcade.Group;
+
+    // Chance for a destroyed enemy to drop a health pickup: tougher enemies drop more often
+    private static readonly ENEMY_DROP_CHANCE: number = 0.08;
+    private static readonly SINE_ENEMY_DROP_CHANCE: number = 0.35;
 
     // Difficulty ramp: spawns speed up with the score, capped so the game stays playable
     private static readonly SPAWN_SPEEDUP_PER_POINT: number = 0.02;
@@ -71,6 +77,7 @@ export default class EntityManager extends Plugins.ScenePlugin {
             defaultFrame: 'ufoRed',
             createCallback: (enemy) => {
                 (enemy as Enemy).init(this._enemyBullets);
+                this.dropPickupOnDeath(enemy as Entity, EntityManager.ENEMY_DROP_CHANCE);
             }
         });
 
@@ -90,6 +97,16 @@ export default class EntityManager extends Plugins.ScenePlugin {
             defaultFrame: 'ufoRed',
             createCallback: (enemy) => {
                 (enemy as SineEnemy).init(this._enemyBullets);
+                this.dropPickupOnDeath(enemy as Entity, EntityManager.SINE_ENEMY_DROP_CHANCE);
+            }
+        });
+
+        this._healthPickups = this.scene!.physics.add.group({
+            classType: HealthPickup,
+            defaultKey: 'sprites',
+            defaultFrame: 'playerLife1_blue',
+            createCallback: (pickup) => {
+                (pickup as HealthPickup).init();
             }
         });
 
@@ -134,7 +151,21 @@ export default class EntityManager extends Plugins.ScenePlugin {
             this.scene?.cameras.main.shake(100, 0.03);
         });
 
+        this.scene!.physics.add.overlap(this._player, this._healthPickups, (player, pickup) => {
+            (pickup as HealthPickup).disable();
+            (player as Player).getComponent(Health)?.heal(HealthPickup.HEAL_AMOUNT);
+        });
+
         console.log("[EntityManager] Group collisions initialized");
+    }
+
+    private dropPickupOnDeath(enemy: Entity, dropChance: number) {
+        enemy.getComponent(Health)?.on(Health.DEATH_EVENT, () => {
+            if (Math.random() >= dropChance)
+                return;
+
+            (this._healthPickups.get() as HealthPickup | null)?.enable(enemy.x, enemy.y);
+        });
     }
 
     private updateDifficulty() {
