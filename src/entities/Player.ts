@@ -16,15 +16,12 @@ export default class Player extends Entity {
         damage: 1
     };
 
-    private static readonly MOUSE_SPEED_FACTOR: number = 2.5;
     // Weapon upgrade: one more bullet every SCORE_PER_UPGRADE points, up to MAX_BULLETS
     private static readonly SCORE_PER_UPGRADE: number = 15;
     private static readonly MAX_BULLETS: number = 5;
     private static readonly SPREAD_DEG_PER_BULLET: number = 8;
 
     private readonly _cursorKeys: Phaser.Types.Input.Keyboard.CursorKeys;
-    // Last pointer position, null once the keyboard takes over so the ship does not snap back
-    private _pointerTarget: Phaser.Math.Vector2 | null = null;
     private _playerShipData: PlayerShipData;
     private _rateOfFire: number;
     private _lastShotTime: number;
@@ -39,10 +36,6 @@ export default class Player extends Entity {
             this.scene.input.keyboard.addKey(Input.Keyboard.KeyCodes.TWO).on('down', () => this.selectPlayerShip(2));
             this.scene.input.keyboard.addKey(Input.Keyboard.KeyCodes.THREE).on('down', () => this.selectPlayerShip(3));
         }
-
-        this.scene.input.on(Input.Events.POINTER_MOVE, (pointer: Input.Pointer) => {
-            this._pointerTarget = new Phaser.Math.Vector2(pointer.x, pointer.y);
-        });
     }
 
     public init(bulletsGroup: Phaser.Physics.Arcade.Group) {
@@ -83,16 +76,7 @@ export default class Player extends Entity {
         super.preUpdate(timeSinceLaunch, deltaTime);
 
         // Press left or right arrow keys to move the player smoothly horizontally using deltaTime
-        if (this._cursorKeys.left.isDown || this._cursorKeys.right.isDown) {
-            this._pointerTarget = null;
-        }
-
-        if (this._pointerTarget) {
-            const movement = this.getComponent(Movement);
-            movement?.setSpeed(this._playerShipData.movementSpeed * Player.MOUSE_SPEED_FACTOR);
-            movement?.moveTowards(this, this._pointerTarget.x, this._pointerTarget.y, deltaTime);
-            movement?.setSpeed(this._playerShipData.movementSpeed);
-        } else if (this._cursorKeys.left.isDown) {
+        if (this._cursorKeys.left.isDown) {
             if (this._cursorKeys.shift.isDown) {
                 this.angle -= this._playerShipData.movementSpeed * deltaTime;
             } else {
@@ -105,12 +89,10 @@ export default class Player extends Entity {
                 this.getComponent(Movement)?.moveHorizontally(this, deltaTime);
             }
         }
-        // Stop player from going offscreen, and keep it in the bottom half of the screen
-        const camera = this.scene.cameras.main;
-        this.x = Phaser.Math.Clamp(this.x, this.displayWidth / 2, camera.width - this.displayWidth / 2);
-        this.y = Phaser.Math.Clamp(this.y, camera.height / 2, camera.height - this.displayHeight / 2);
+        // Stop player from going offscreen
+        this.x = Phaser.Math.Clamp(this.x, this.displayWidth / 2, this.scene.cameras.main.width - this.displayWidth / 2);
 
-        // Press space or hold the mouse button / finger to shoot
+        // Press space or hold the left mouse button to shoot
         if (this._cursorKeys.space.isDown || this.scene.input.activePointer.isDown) {
             if (timeSinceLaunch - this._lastShotTime > this._rateOfFire * 1000) {
                 const score: number = Number(this.scene.registry.get(RegistryConstants.Keys.PLAYER_SCORE) ?? 0);

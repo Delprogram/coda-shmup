@@ -23,21 +23,6 @@ export default class Movement implements IComponent {
         entity.x += this._speed * deltaTime;
     }
 
-    // Move straight toward a target without overshooting it
-    public moveTowards(entity: Entity, targetX: number, targetY: number, deltaTime: number) {
-        if (!this.enabled)
-            return;
-
-        const distance: number = Phaser.Math.Distance.Between(entity.x, entity.y, targetX, targetY);
-        const step: number = Math.min(distance, this._speed * deltaTime);
-        if (step <= 0)
-            return;
-
-        const angle: number = Phaser.Math.Angle.Between(entity.x, entity.y, targetX, targetY);
-        entity.x += Math.cos(angle) * step;
-        entity.y += Math.sin(angle) * step;
-    }
-
     public moveVertically(entity: Entity, deltaTime: number) {
         if (!this.enabled)
             return;
