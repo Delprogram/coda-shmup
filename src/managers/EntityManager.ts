@@ -1,5 +1,6 @@
 import {GameObjects, Plugins, Physics, Scene} from "phaser";
 import Health from "../components/Health.ts";
+import Boss from "../entities/Boss.ts";
 import Bullet from "../entities/Bullet.ts";
 import Enemy from "../entities/Enemy.ts";
 import Entity from "../entities/Entity.ts";
@@ -32,6 +33,20 @@ export default class EntityManager extends Plugins.ScenePlugin {
     private _sineEnemies: Physics.Arcade.Group;
     private _spawnTimers: Phaser.Time.TimerEvent[] = [];
     private _healthPickups: Physics.Arcade.Group;
+    private _bosses: Physics.Arcade.Group;
+
+    // Levels: kill enough enemies to make the boss appear; beating it starts the next, harder level
+    private static readonly KILLS_FIRST_BOSS: number = 15;
+    private static readonly KILLS_PER_LEVEL: number = 10;
+    private static readonly BOSS_WARNING_MS: number = 2500;
+    private static readonly BOSS_SCORE_PER_LEVEL: number = 50;
+    private static readonly BOSS_DROPS: number = 3;
+    private static readonly BOSS_DROP_SPREAD: number = 120;
+    private static readonly BOSS_CONTACT_DAMAGE: number = 2;
+    private static readonly SPAWN_SPEEDUP_PER_LEVEL: number = 0.3;
+
+    private _levelKills: number = 0;
+    private _bossFight: boolean = false;
 
     // Chance for a destroyed enemy to drop a health pickup: tougher enemies drop more often
     private static readonly ENEMY_DROP_CHANCE: number = 0.08;
@@ -46,8 +61,7 @@ export default class EntityManager extends Plugins.ScenePlugin {
     private _combo: number = 0;
     private _comboResetTimer: Phaser.Time.TimerEvent | null = null;
 
-    // Difficulty ramp: spawns speed up with the score, capped so the game stays playable
-    private static readonly SPAWN_SPEEDUP_PER_POINT: number = 0.008;
+    // Spawns speed up with the level, capped so the game stays playable
     private static readonly MAX_SPAWN_SPEEDUP: number = 3;
 
     // Enemies aim at a random point in the central area of the screen (as a ratio of its size)
@@ -97,6 +111,8 @@ export default class EntityManager extends Plugins.ScenePlugin {
         this._spawnTimers = [];
         this._combo = 0;
         this._comboResetTimer = null;
+        this._levelKills = 0;
+        this._bossFight = false;
 
         // Spawn enemies indefinitely
         this._spawnTimers.push(this.scene!.time.addEvent({
@@ -122,6 +138,17 @@ export default class EntityManager extends Plugins.ScenePlugin {
             defaultFrame: 'playerLife1_blue',
             createCallback: (pickup) => {
                 (pickup as HealthPickup).init();
+            }
+        });
+
+        this._bosses = this.scene!.physics.add.group({
+            classType: Boss,
+            defaultKey: 'sprites',
+            defaultFrame: 'ufoRed',
+            maxSize: 1,
+            createCallback: (boss) => {
+                (boss as Boss).init(this._enemyBullets);
+                (boss as Boss).getComponent(Health)?.on(Health.DEATH_EVENT, () => this.onBossKilled(boss as Boss));
             }
         });
 
@@ -166,6 +193,19 @@ export default class EntityManager extends Plugins.ScenePlugin {
             this.scene?.cameras.main.shake(100, 0.03);
         });
 
+        this.scene!.physics.add.overlap(this._playerBullets, this._bosses, (bullet, boss) => {
+            this.scene!.registry.inc(RegistryConstants.Keys.PLAYER_SCORE);
+
+            (bullet as Bullet).disable();
+            (boss as Boss).getComponent(Health)?.damage((bullet as Bullet).damage);
+        });
+
+        // Touching the boss hurts the player but does not destroy the boss
+        this.scene!.physics.add.overlap(this._player, this._bosses, (player) => {
+            (player as Player).getComponent(Health)?.damage(EntityManager.BOSS_CONTACT_DAMAGE);
+            this.scene?.cameras.main.shake(150, 0.03);
+        });
+
         this.scene!.physics.add.overlap(this._player, this._healthPickups, (player, pickup) => {
             (pickup as HealthPickup).disable();
             (player as Player).getComponent(Health)?.heal(HealthPickup.HEAL_AMOUNT);
@@ -179,8 +219,58 @@ export default class EntityManager extends Plugins.ScenePlugin {
             this.addComboKill(enemy.x, enemy.y);
 
             if (Math.random() < dropChance)
-                (this._healthPickups.get() as HealthPickup | null)?.enable(enemy.x, enemy.y);
+                this.dropHealthPickup(enemy.x, enemy.y);
+
+            this._levelKills++;
+            if (!this._bossFight && this._levelKills >= this.killsToBoss())
+                this.startBossFight();
         });
+    }
+
+    private dropHealthPickup(x: number, y: number) {
+        (this._healthPickups.get() as HealthPickup | null)?.enable(x, y);
+    }
+
+    private currentLevel(): number {
+        return Number(this.scene!.registry.get(RegistryConstants.Keys.LEVEL) ?? 1);
+    }
+
+    private killsToBoss(): number {
+        return EntityManager.KILLS_FIRST_BOSS + EntityManager.KILLS_PER_LEVEL * (this.currentLevel() - 1);
+    }
+
+    private startBossFight() {
+        this._bossFight = true;
+        this._spawnTimers.forEach(timer => timer.paused = true);
+        this.game!.events.emit(GameConstants.Events.BOSS_INCOMING_EVENT, this.currentLevel());
+
+        this.scene!.time.delayedCall(EntityManager.BOSS_WARNING_MS, () => {
+            const boss = this._bosses.get() as Boss | null;
+            if (!boss)
+                return;
+
+            boss.enable(this.currentLevel(), this._player);
+            this.game!.events.emit(GameConstants.Events.BOSS_SPAWNED_EVENT, boss);
+        });
+    }
+
+    private onBossKilled(boss: Boss) {
+        const scene = this.scene!;
+        const level: number = this.currentLevel();
+
+        scene.registry.inc(RegistryConstants.Keys.PLAYER_SCORE, EntityManager.BOSS_SCORE_PER_LEVEL * level);
+        this.addComboKill(boss.x, boss.y);
+        scene.cameras.main.shake(400, 0.03);
+        for (let i: number = 0; i < EntityManager.BOSS_DROPS; i++) {
+            const spread: number = EntityManager.BOSS_DROP_SPREAD;
+            this.dropHealthPickup(boss.x + Phaser.Math.Between(-spread, spread), boss.y + Phaser.Math.Between(-spread, spread));
+        }
+
+        this._levelKills = 0;
+        this._bossFight = false;
+        scene.registry.set(RegistryConstants.Keys.LEVEL, level + 1);
+        this.updateDifficulty();
+        this._spawnTimers.forEach(timer => timer.paused = false);
     }
 
     private addComboKill(x: number, y: number) {
@@ -209,8 +299,8 @@ export default class EntityManager extends Plugins.ScenePlugin {
     }
 
     private updateDifficulty() {
-        const score: number = Number(this.scene!.registry.get(RegistryConstants.Keys.PLAYER_SCORE) ?? 0);
-        const speedup: number = Math.min(1 + score * EntityManager.SPAWN_SPEEDUP_PER_POINT, EntityManager.MAX_SPAWN_SPEEDUP);
+        const speedup: number = Math.min(1 + (this.currentLevel() - 1) * EntityManager.SPAWN_SPEEDUP_PER_LEVEL,
+            EntityManager.MAX_SPAWN_SPEEDUP);
         this._spawnTimers.forEach(timer => timer.timeScale = speedup);
     }
 
@@ -232,8 +322,6 @@ export default class EntityManager extends Plugins.ScenePlugin {
     }
 
     private spawnEnemy() {
-        this.updateDifficulty();
-
         if (this._enemies.countActive(true) >= 5) {
             return;
         }
@@ -252,8 +340,6 @@ export default class EntityManager extends Plugins.ScenePlugin {
     }
 
     private spawnSineEnemy(data: SineEnemyData) {
-        this.updateDifficulty();
-
         if (this._sineEnemies.countActive(true) >= data.spawn.maxActive) {
             return;
         }

@@ -10,7 +10,7 @@ export default class Health extends Phaser.Events.EventEmitter implements ICompo
     private static readonly PARTICLES_LIFESPAN_MS: number = 500;
 
     private _current: number;
-    private readonly _max: number;
+    private _max: number;
     private readonly _entity: Entity;
 
     public get current(): number {
@@ -27,6 +27,12 @@ export default class Health extends Phaser.Events.EventEmitter implements ICompo
         this._current = value;
         this._max = value;
         this._entity = entity;
+    }
+
+    // Change the max and refill, without events: for pooled entities whose max depends on the context
+    public resetMax(max: number) {
+        this._max = max;
+        this._current = max;
     }
 
     public damage(amount: number, emitEvents: boolean = true): void {
