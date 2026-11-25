@@ -13,6 +13,9 @@ export default class MainUIScene extends Scene {
     private _healthBarFill: GameObjects.Rectangle;
     private _healthBarText: GameObjects.Text;
     private _scoreText: GameObjects.BitmapText;
+    private _comboText: GameObjects.BitmapText;
+    private static readonly COMBO_POP_SCALE: number = 1.4;
+    private static readonly COMBO_POP_MS: number = 120;
 
     constructor() {
         super(GameConstants.SceneKeys.MAIN_UI);
@@ -22,10 +25,12 @@ export default class MainUIScene extends Scene {
     init() {
         this.game.events.on(GameConstants.Events.PLAYER_SPAWNED_EVENT, this.onPlayerSpawned, this);
         this.registry.events.on(RegistryConstants.Events.PLAYER_SCORE_CHANGE, this.onPlayerScoreChanged, this);
+        this.registry.events.on(RegistryConstants.Events.PLAYER_COMBO_CHANGE, this.onPlayerComboChanged, this);
 
         this.events.once(Scenes.Events.SHUTDOWN, () => {
             this.game.events.off(GameConstants.Events.PLAYER_SPAWNED_EVENT, this.onPlayerSpawned, this);
             this.registry.events.off(RegistryConstants.Events.PLAYER_SCORE_CHANGE, this.onPlayerScoreChanged, this);
+            this.registry.events.off(RegistryConstants.Events.PLAYER_COMBO_CHANGE, this.onPlayerComboChanged, this);
         }, this);
     }
 
@@ -49,6 +54,9 @@ export default class MainUIScene extends Scene {
         this._scoreText = this.add.bitmapText(this.scale.width - 64, 64, "future-bmp", scoreStr, 128)
             .setOrigin(1, 0);
 
+        this._comboText = this.add.bitmapText(this.scale.width - 64, this._scoreText.y + this._scoreText.height + 16,
+            "future-bmp", "", 64).setOrigin(1, 0).setTint(0xffe066);
+
         this.scene.bringToTop();
 
         console.log("MainUIScene created");
@@ -57,6 +65,19 @@ export default class MainUIScene extends Scene {
     private onPlayerScoreChanged(_: any, value: number) {
         const scoreStr: string = value.toString().padStart(GameConstants.MAX_SCORE_DIGITS, "0");
         this._scoreText.setText(scoreStr);
+    }
+
+    private onPlayerComboChanged(_: any, combo: number) {
+        // A single kill is not a combo
+        this._comboText.setText(combo > 1 ? "COMBO x" + combo : "");
+        if (combo > 1) {
+            this.tweens.add({
+                targets: this._comboText,
+                scale: {from: MainUIScene.COMBO_POP_SCALE, to: 1},
+                duration: MainUIScene.COMBO_POP_MS,
+                ease: 'Back.easeOut'
+            });
+        }
     }
 
     private onPlayerSpawned(player: Player) {

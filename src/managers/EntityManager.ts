@@ -37,8 +37,17 @@ export default class EntityManager extends Plugins.ScenePlugin {
     private static readonly ENEMY_DROP_CHANCE: number = 0.08;
     private static readonly SINE_ENEMY_DROP_CHANCE: number = 0.35;
 
+    // Combo: each kill within COMBO_WINDOW_MS of the previous one raises the bonus, up to MAX_COMBO
+    private static readonly COMBO_WINDOW_MS: number = 2000;
+    private static readonly MAX_COMBO: number = 8;
+    private static readonly SCORE_POPUP_RISE: number = 80;
+    private static readonly SCORE_POPUP_MS: number = 600;
+
+    private _combo: number = 0;
+    private _comboResetTimer: Phaser.Time.TimerEvent | null = null;
+
     // Difficulty ramp: spawns speed up with the score, capped so the game stays playable
-    private static readonly SPAWN_SPEEDUP_PER_POINT: number = 0.02;
+    private static readonly SPAWN_SPEEDUP_PER_POINT: number = 0.008;
     private static readonly MAX_SPAWN_SPEEDUP: number = 3;
 
     constructor(scene: Scene, pluginManager: Plugins.PluginManager) {
@@ -77,11 +86,13 @@ export default class EntityManager extends Plugins.ScenePlugin {
             defaultFrame: 'ufoRed',
             createCallback: (enemy) => {
                 (enemy as Enemy).init(this._enemyBullets);
-                this.dropPickupOnDeath(enemy as Entity, EntityManager.ENEMY_DROP_CHANCE);
+                this.listenEnemyDeath(enemy as Entity, EntityManager.ENEMY_DROP_CHANCE);
             }
         });
 
         this._spawnTimers = [];
+        this._combo = 0;
+        this._comboResetTimer = null;
 
         // Spawn enemies indefinitely
         this._spawnTimers.push(this.scene!.time.addEvent({
@@ -97,7 +108,7 @@ export default class EntityManager extends Plugins.ScenePlugin {
             defaultFrame: 'ufoRed',
             createCallback: (enemy) => {
                 (enemy as SineEnemy).init(this._enemyBullets);
-                this.dropPickupOnDeath(enemy as Entity, EntityManager.SINE_ENEMY_DROP_CHANCE);
+                this.listenEnemyDeath(enemy as Entity, EntityManager.SINE_ENEMY_DROP_CHANCE);
             }
         });
 
@@ -159,12 +170,37 @@ export default class EntityManager extends Plugins.ScenePlugin {
         console.log("[EntityManager] Group collisions initialized");
     }
 
-    private dropPickupOnDeath(enemy: Entity, dropChance: number) {
+    private listenEnemyDeath(enemy: Entity, dropChance: number) {
         enemy.getComponent(Health)?.on(Health.DEATH_EVENT, () => {
-            if (Math.random() >= dropChance)
-                return;
+            this.addComboKill(enemy.x, enemy.y);
 
-            (this._healthPickups.get() as HealthPickup | null)?.enable(enemy.x, enemy.y);
+            if (Math.random() < dropChance)
+                (this._healthPickups.get() as HealthPickup | null)?.enable(enemy.x, enemy.y);
+        });
+    }
+
+    private addComboKill(x: number, y: number) {
+        const scene = this.scene!;
+        this._combo = Math.min(this._combo + 1, EntityManager.MAX_COMBO);
+        scene.registry.inc(RegistryConstants.Keys.PLAYER_SCORE, this._combo);
+        scene.registry.set(RegistryConstants.Keys.PLAYER_COMBO, this._combo);
+
+        this._comboResetTimer?.remove();
+        this._comboResetTimer = scene.time.delayedCall(EntityManager.COMBO_WINDOW_MS, () => {
+            this._combo = 0;
+            scene.registry.set(RegistryConstants.Keys.PLAYER_COMBO, 0);
+        });
+
+        const popup = scene.add.text(x, y, "+" + this._combo,
+            {fontSize: '48px', color: '#ffe066', fontFamily: 'future', stroke: '#000', strokeThickness: 6})
+            .setOrigin(0.5);
+        scene.tweens.add({
+            targets: popup,
+            y: y - EntityManager.SCORE_POPUP_RISE,
+            alpha: 0,
+            duration: EntityManager.SCORE_POPUP_MS,
+            ease: 'Quad.easeOut',
+            onComplete: () => popup.destroy()
         });
     }
 
