@@ -1,5 +1,6 @@
 import Entity from './Entity.ts';
 import Health from "../components/Health.ts";
+import HealthBar from "../components/HealthBar.ts";
 import SineMovement from "../components/SineMovement.ts";
 import Weapon from "../components/Weapon.ts";
 import {SineEnemyData} from "../gameData/SineEnemyData.ts";
@@ -22,8 +23,9 @@ export default class SineEnemy extends Entity {
         this.addComponent(new Weapon(bulletsGroup, this._data.spreadShot.bullet));
 
         // Listen once per enemy, not on every enable(): pooled enemies are reused many times
-        const health = this.getComponent(Health);
-        health?.on(Health.CHANGE_EVENT, () => {
+        const health = this.getComponent(Health)!;
+        this.addComponent(new HealthBar(this, health));
+        health.on(Health.CHANGE_EVENT, () => {
             this.setTintFill(SineEnemy.HIT_FLASH_COLOR);
 
             if (health.current == 0) {
@@ -63,11 +65,13 @@ export default class SineEnemy extends Entity {
         // Restore health, in case the enemy is reused from the pool, without emitting events
         const health = this.getComponent(Health);
         health?.heal(health.max, false);
+        this.getComponent(HealthBar)?.refresh();
     }
 
     public disable() {
         this.disableBody(true, true);
         this._shootTimer.paused = true;
+        this.getComponent(HealthBar)?.hide();
     }
 
     private shoot() {
@@ -85,5 +89,6 @@ export default class SineEnemy extends Entity {
         }
 
         this.getComponent(SineMovement)?.move(this, deltaTime);
+        this.getComponent(HealthBar)?.followEntity();
     }
 }
