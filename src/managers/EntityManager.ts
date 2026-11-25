@@ -29,6 +29,11 @@ export default class EntityManager extends Plugins.ScenePlugin {
     private _enemies: Physics.Arcade.Group;
     private _enemyBullets: Physics.Arcade.Group;
     private _sineEnemies: Physics.Arcade.Group;
+    private _spawnTimers: Phaser.Time.TimerEvent[] = [];
+
+    // Difficulty ramp: spawns speed up with the score, capped so the game stays playable
+    private static readonly SPAWN_SPEEDUP_PER_POINT: number = 0.02;
+    private static readonly MAX_SPAWN_SPEEDUP: number = 3;
 
     constructor(scene: Scene, pluginManager: Plugins.PluginManager) {
         super(scene, pluginManager, EntityManager.PLUGIN_KEY);
@@ -69,13 +74,15 @@ export default class EntityManager extends Plugins.ScenePlugin {
             }
         });
 
+        this._spawnTimers = [];
+
         // Spawn enemies indefinitely
-        this.scene!.time.addEvent({
+        this._spawnTimers.push(this.scene!.time.addEvent({
             delay: 1500,
             callback: this.spawnEnemy,
             callbackScope: this,
             loop: true
-        });
+        }));
 
         this._sineEnemies = this.scene!.physics.add.group({
             classType: SineEnemy,
@@ -87,11 +94,11 @@ export default class EntityManager extends Plugins.ScenePlugin {
         });
 
         const sineEnemyData = this.scene!.cache.json.get(SineEnemy.DATA_KEY) as SineEnemyData;
-        this.scene!.time.addEvent({
+        this._spawnTimers.push(this.scene!.time.addEvent({
             delay: sineEnemyData.spawn.delay,
             callback: () => this.spawnSineEnemy(sineEnemyData),
             loop: true
-        });
+        }));
 
         console.log("[EntityManager] Enemies initialized");
 
@@ -130,7 +137,15 @@ export default class EntityManager extends Plugins.ScenePlugin {
         console.log("[EntityManager] Group collisions initialized");
     }
 
+    private updateDifficulty() {
+        const score: number = Number(this.scene!.registry.get(RegistryConstants.Keys.PLAYER_SCORE) ?? 0);
+        const speedup: number = Math.min(1 + score * EntityManager.SPAWN_SPEEDUP_PER_POINT, EntityManager.MAX_SPAWN_SPEEDUP);
+        this._spawnTimers.forEach(timer => timer.timeScale = speedup);
+    }
+
     private spawnEnemy() {
+        this.updateDifficulty();
+
         if (this._enemies.countActive(true) >= 5) {
             return;
         }
@@ -148,6 +163,8 @@ export default class EntityManager extends Plugins.ScenePlugin {
     }
 
     private spawnSineEnemy(data: SineEnemyData) {
+        this.updateDifficulty();
+
         if (this._sineEnemies.countActive(true) >= data.spawn.maxActive) {
             return;
         }

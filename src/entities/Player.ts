@@ -5,6 +5,7 @@ import Entity from './Entity.ts';
 import Health from "../components/Health.ts";
 import Movement from "../components/Movement.ts";
 import Weapon from "../components/Weapon.ts";
+import RegistryConstants from "../RegistryConstants.ts";
 
 export default class Player extends Entity {
     private readonly _bulletData: BulletData = {
@@ -16,6 +17,10 @@ export default class Player extends Entity {
     };
 
     private static readonly MOUSE_SPEED_FACTOR: number = 2.5;
+    // Weapon upgrade: one more bullet every SCORE_PER_UPGRADE points, up to MAX_BULLETS
+    private static readonly SCORE_PER_UPGRADE: number = 15;
+    private static readonly MAX_BULLETS: number = 5;
+    private static readonly SPREAD_DEG_PER_BULLET: number = 8;
 
     private readonly _cursorKeys: Phaser.Types.Input.Keyboard.CursorKeys;
     // Last pointer position, null once the keyboard takes over so the ship does not snap back
@@ -108,7 +113,9 @@ export default class Player extends Entity {
         // Press space or hold the mouse button / finger to shoot
         if (this._cursorKeys.space.isDown || this.scene.input.activePointer.isDown) {
             if (timeSinceLaunch - this._lastShotTime > this._rateOfFire * 1000) {
-                this.getComponent(Weapon)?.shoot(this);
+                const score: number = Number(this.scene.registry.get(RegistryConstants.Keys.PLAYER_SCORE) ?? 0);
+                const bulletCount: number = Math.min(1 + Math.floor(score / Player.SCORE_PER_UPGRADE), Player.MAX_BULLETS);
+                this.getComponent(Weapon)?.shootSpread(this, bulletCount, (bulletCount - 1) * Player.SPREAD_DEG_PER_BULLET);
                 this.scene.sound.play('sfx_laser1');
 
                 this._lastShotTime = timeSinceLaunch;
