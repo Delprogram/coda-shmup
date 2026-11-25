@@ -22,6 +22,8 @@ export default class Player extends Entity {
     private static readonly SPREAD_DEG_PER_BULLET: number = 8;
 
     private readonly _cursorKeys: Phaser.Types.Input.Keyboard.CursorKeys;
+    // WASD (QWERTY) and ZQSD (AZERTY) both work, like in most FPS games
+    private readonly _moveKeys: Record<'up' | 'down' | 'left' | 'right', Input.Keyboard.Key[]>;
     private _playerShipData: PlayerShipData;
     private _rateOfFire: number;
     private _lastShotTime: number;
@@ -31,6 +33,16 @@ export default class Player extends Entity {
 
         if (this.scene.input.keyboard) {
             this._cursorKeys = this.scene.input.keyboard.createCursorKeys();
+
+            const keyboard = this.scene.input.keyboard;
+            const keys = (...codes: number[]) => codes.map(code => keyboard.addKey(code));
+            const KeyCodes = Input.Keyboard.KeyCodes;
+            this._moveKeys = {
+                up: [...keys(KeyCodes.W, KeyCodes.Z), this._cursorKeys.up],
+                down: [...keys(KeyCodes.S), this._cursorKeys.down],
+                left: [...keys(KeyCodes.A, KeyCodes.Q), this._cursorKeys.left],
+                right: [...keys(KeyCodes.D), this._cursorKeys.right],
+            };
 
             this.scene.input.keyboard.addKey(Input.Keyboard.KeyCodes.ONE).on('down', () => this.selectPlayerShip(1));
             this.scene.input.keyboard.addKey(Input.Keyboard.KeyCodes.TWO).on('down', () => this.selectPlayerShip(2));
@@ -75,24 +87,28 @@ export default class Player extends Entity {
     preUpdate(timeSinceLaunch: number, deltaTime: number) {
         super.preUpdate(timeSinceLaunch, deltaTime);
 
-        // Press left or right arrow keys to move the player smoothly horizontally using deltaTime
-        if (this._cursorKeys.left.isDown) {
-            if (this._cursorKeys.shift.isDown) {
-                this.angle -= this._playerShipData.movementSpeed * deltaTime;
-            } else {
-                this.getComponent(Movement)?.moveHorizontally(this, -deltaTime);
-            }
-        } else if (this._cursorKeys.right.isDown) {
-            if (this._cursorKeys.shift.isDown) {
-                this.angle += this._playerShipData.movementSpeed * deltaTime;
-            } else {
-                this.getComponent(Movement)?.moveHorizontally(this, deltaTime);
-            }
-        }
-        // Stop player from going offscreen
-        this.x = Phaser.Math.Clamp(this.x, this.displayWidth / 2, this.scene.cameras.main.width - this.displayWidth / 2);
+        // Move in 8 directions, normalized so diagonals are not faster
+        const isDown = (keys: Input.Keyboard.Key[]) => keys.some(key => key.isDown);
+        const direction = new Phaser.Math.Vector2(
+            Number(isDown(this._moveKeys.right)) - Number(isDown(this._moveKeys.left)),
+            Number(isDown(this._moveKeys.down)) - Number(isDown(this._moveKeys.up))
+        ).normalize();
+        const movement = this.getComponent(Movement);
+        movement?.moveHorizontally(this, direction.x * deltaTime);
+        movement?.moveVertically(this, direction.y * deltaTime);
 
-        // Press space or hold the left mouse button to shoot
+        // Stop player from going offscreen
+        const camera = this.scene.cameras.main;
+        this.x = Phaser.Math.Clamp(this.x, this.displayWidth / 2, camera.width - this.displayWidth / 2);
+        this.y = Phaser.Math.Clamp(this.y, this.displayHeight / 2, camera.height - this.displayHeight / 2);
+
+        // Aim at the mouse, once it has moved over the game (before that, keep facing up)
+        const pointer = this.scene.input.activePointer;
+        if (pointer.moveTime > 0) {
+            this.rotation = Phaser.Math.Angle.Between(this.x, this.y, pointer.worldX, pointer.worldY);
+        }
+
+        // Press space or hold the left mouse button to shoot toward the mouse
         if (this._cursorKeys.space.isDown || this.scene.input.activePointer.isDown) {
             if (timeSinceLaunch - this._lastShotTime > this._rateOfFire * 1000) {
                 const score: number = Number(this.scene.registry.get(RegistryConstants.Keys.PLAYER_SCORE) ?? 0);
