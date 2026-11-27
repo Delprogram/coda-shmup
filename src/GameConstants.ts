@@ -11,6 +11,8 @@ export default class GameConstants {
         MAIN_GAME: "MainGameScene",
         MAIN_UI: "MainUIScene",
         GAME_OVER: "GameOverScene",
+        CONTROLS: "ControlsScene",
+        PAUSE: "PauseScene",
     } as const);
 
     public static readonly MAX_SCORE_DIGITS: number = 6;
