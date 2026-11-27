@@ -1,6 +1,7 @@
-import {GameObjects, Plugins, Physics, Scene} from "phaser";
+import {GameObjects, Plugins, Physics, Scene, Scenes} from "phaser";
 import Health from "../components/Health.ts";
 import Skills, {SkillId} from "../components/Skills.ts";
+import SineMovement from "../components/SineMovement.ts";
 import Boss from "../entities/Boss.ts";
 import Bullet from "../entities/Bullet.ts";
 import Enemy from "../entities/Enemy.ts";
@@ -73,6 +74,26 @@ export default class EntityManager extends Plugins.ScenePlugin {
     // Chance for a destroyed enemy to drop a health pickup: tougher enemies drop more often
     private static readonly ENEMY_DROP_CHANCE: number = 0.08;
     private static readonly SINE_ENEMY_DROP_CHANCE: number = 0.35;
+    // Rarer power-up drops (drones or nuke)
+    private static readonly ENEMY_POWER_UP_CHANCE: number = 0.04;
+    private static readonly SINE_ENEMY_POWER_UP_CHANCE: number = 0.12;
+    private static readonly POWER_UPS: PickupKind[] = ['drones', 'nuke'];
+
+    // Black hole skill: pulls nearby enemies to its center, swallows enemy bullets and grinds what reaches the core
+    private static readonly BLACK_HOLE_MS: number = 4000;
+    private static readonly BLACK_HOLE_PULL_RADIUS: number = 650;
+    private static readonly BLACK_HOLE_CORE_RADIUS: number = 90;
+    private static readonly BLACK_HOLE_PULL_SPEED: number = 0.6;
+    private static readonly BLACK_HOLE_DAMAGE_MS: number = 250;
+    private static readonly BLACK_HOLE_DAMAGE: number = 1;
+    private static readonly BLACK_HOLE_COLOR: number = 0xb44cff;
+    private static readonly BLACK_HOLE_SUCTION_RING_MS: number = 280;
+    private static readonly BLACK_HOLE_SPIN_MS: number = 700;
+
+    // Nuke pickup: destroys every regular enemy and bullet on screen, hurts the boss
+    private static readonly NUKE_BOSS_DAMAGE: number = 25;
+    private static readonly NUKE_RING_RADIUS: number = 1800;
+    private static readonly NUKE_RING_MS: number = 600;
 
     // Combo: each kill within COMBO_WINDOW_MS of the previous one raises the bonus, up to MAX_COMBO
     private static readonly COMBO_WINDOW_MS: number = 2000;
@@ -109,6 +130,10 @@ export default class EntityManager extends Plugins.ScenePlugin {
         this._player.getComponent(Skills)?.on(Skills.USED_EVENT, (id: SkillId) => {
             if (id === 'shockwave')
                 this.shockwave(this._player.x, this._player.y);
+            else if (id === 'blackHole') {
+                const pointer = this.scene!.input.activePointer;
+                this.blackHole(pointer.worldX, pointer.worldY);
+            }
         });
 
         console.log("[EntityManager] Player spawned");
@@ -128,7 +153,7 @@ export default class EntityManager extends Plugins.ScenePlugin {
             defaultFrame: 'ufoRed',
             createCallback: (enemy) => {
                 (enemy as Enemy).init(this._enemyBullets);
-                this.listenEnemyDeath(enemy as Entity, EntityManager.ENEMY_DROP_CHANCE);
+                this.listenEnemyDeath(enemy as Entity, EntityManager.ENEMY_DROP_CHANCE, EntityManager.ENEMY_POWER_UP_CHANCE);
             }
         });
 
@@ -153,7 +178,7 @@ export default class EntityManager extends Plugins.ScenePlugin {
             defaultFrame: 'ufoRed',
             createCallback: (enemy) => {
                 (enemy as SineEnemy).init(this._enemyBullets);
-                this.listenEnemyDeath(enemy as Entity, EntityManager.SINE_ENEMY_DROP_CHANCE);
+                this.listenEnemyDeath(enemy as Entity, EntityManager.SINE_ENEMY_DROP_CHANCE, EntityManager.SINE_ENEMY_POWER_UP_CHANCE);
             }
         });
 
@@ -241,18 +266,22 @@ export default class EntityManager extends Plugins.ScenePlugin {
                 case 'health': (player as Player).getComponent(Health)?.heal(Pickup.HEAL_AMOUNT); break;
                 case 'laserShield': (player as Player).activateDeflector(); break;
                 case 'laserGun': (player as Player).activateLaserGun(); break;
+                case 'drones': (player as Player).activateDrones(); break;
+                case 'nuke': this.nuke(); break;
             }
         });
 
         console.log("[EntityManager] Group collisions initialized");
     }
 
-    private listenEnemyDeath(enemy: Entity, dropChance: number) {
+    private listenEnemyDeath(enemy: Entity, dropChance: number, powerUpChance: number) {
         enemy.getComponent(Health)?.on(Health.DEATH_EVENT, () => {
             this.addComboKill(enemy.x, enemy.y);
 
             if (Math.random() < dropChance)
                 this.dropHealthPickup(enemy.x, enemy.y);
+            else if (Math.random() < powerUpChance)
+                this.dropPickup(enemy.x, enemy.y, Phaser.Utils.Array.GetRandom(EntityManager.POWER_UPS));
 
             this._player.getComponent(Skills)?.addKill();
             this._levelKills++;
@@ -305,7 +334,118 @@ export default class EntityManager extends Plugins.ScenePlugin {
     }
 
     private dropHealthPickup(x: number, y: number) {
-        (this._pickups.get() as Pickup | null)?.enable(x, y, 'health');
+        this.dropPickup(x, y, 'health');
+    }
+
+    private dropPickup(x: number, y: number, kind: PickupKind) {
+        (this._pickups.get() as Pickup | null)?.enable(x, y, kind);
+    }
+
+    private activeEnemies(): Entity[] {
+        return [this._enemies, this._sineEnemies].flatMap(group => group.getMatching('active', true) as Entity[]);
+    }
+
+    private blackHole(x: number, y: number) {
+        const scene = this.scene!;
+        const color: number = EntityManager.BLACK_HOLE_COLOR;
+
+        // Look: black core, two spinning arcs and rings shrinking toward the center (suction)
+        const core = scene.add.circle(x, y, EntityManager.BLACK_HOLE_CORE_RADIUS, 0x000000)
+            .setStrokeStyle(10, color).setScale(0);
+        scene.tweens.add({targets: core, scale: 1, duration: 200, ease: 'Back.easeOut'});
+        const arcs = [1.4, 2].map((radiusFactor, i) => {
+            const arc = scene.add.arc(x, y, EntityManager.BLACK_HOLE_CORE_RADIUS * radiusFactor, 0, 250)
+                .setClosePath(false).setStrokeStyle(8, i === 0 ? 0xffffff : color, 0.8);
+            scene.tweens.add({targets: arc, angle: 360, duration: EntityManager.BLACK_HOLE_SPIN_MS * (i + 1), repeat: -1});
+            return arc;
+        });
+        const suction = scene.time.addEvent({
+            delay: EntityManager.BLACK_HOLE_SUCTION_RING_MS,
+            loop: true,
+            callback: () => {
+                const ring = scene.add.circle(x, y, EntityManager.BLACK_HOLE_PULL_RADIUS).setStrokeStyle(4, color, 0).setScale(1);
+                scene.tweens.add({
+                    targets: ring, scale: 0.15, duration: 600, ease: 'Quad.easeIn',
+                    onUpdate: (tween) => ring.setStrokeStyle(4, color, 0.6 * tween.progress),
+                    onComplete: () => ring.destroy()
+                });
+            }
+        });
+
+        let elapsedMs: number = 0;
+        let damageMs: number = 0;
+        const update = (_time: number, deltaTime: number) => {
+            elapsedMs += deltaTime;
+            damageMs += deltaTime;
+            const dealDamage: boolean = damageMs >= EntityManager.BLACK_HOLE_DAMAGE_MS;
+            if (dealDamage)
+                damageMs = 0;
+
+            for (const enemy of this.activeEnemies()) {
+                const distance: number = Phaser.Math.Distance.Between(x, y, enemy.x, enemy.y);
+                if (distance > EntityManager.BLACK_HOLE_PULL_RADIUS)
+                    continue;
+
+                const step: number = Math.min(EntityManager.BLACK_HOLE_PULL_SPEED * deltaTime, distance);
+                const pull = new Phaser.Math.Vector2(x - enemy.x, y - enemy.y).normalize().scale(step);
+                // A sine enemy recomputes its position from its wave center every frame: pull the center instead
+                const sineMovement = enemy.getComponent(SineMovement);
+                if (sineMovement)
+                    sineMovement.offsetCenter(pull.x, pull.y);
+                else
+                    enemy.setPosition(enemy.x + pull.x, enemy.y + pull.y);
+
+                if (dealDamage && distance <= EntityManager.BLACK_HOLE_CORE_RADIUS + enemy.displayWidth / 2)
+                    enemy.getComponent(Health)?.damage(EntityManager.BLACK_HOLE_DAMAGE);
+            }
+
+            // The boss is too heavy to be pulled, but the core still hurts it
+            for (const boss of this._bosses.getMatching('active', true) as Boss[]) {
+                if (dealDamage && Phaser.Math.Distance.Between(x, y, boss.x, boss.y) <= EntityManager.BLACK_HOLE_CORE_RADIUS + boss.displayWidth / 2)
+                    boss.getComponent(Health)?.damage(EntityManager.BLACK_HOLE_DAMAGE);
+            }
+
+            (this._enemyBullets.getMatching('active', true) as Bullet[])
+                .filter(bullet => Phaser.Math.Distance.Between(x, y, bullet.x, bullet.y) <= EntityManager.BLACK_HOLE_PULL_RADIUS)
+                .forEach(bullet => bullet.disable());
+
+            if (elapsedMs >= EntityManager.BLACK_HOLE_MS)
+                stop();
+        };
+
+        const stop = () => {
+            scene.events.off(Scenes.Events.UPDATE, update);
+            scene.events.off(Scenes.Events.SHUTDOWN, stop);
+            suction.remove();
+            scene.tweens.add({
+                targets: [core, ...arcs], scale: 0, alpha: 0, duration: 250,
+                onComplete: () => [core, ...arcs].forEach(object => object.destroy())
+            });
+        };
+        // Scene events outlive a restart of the scene: always remove the listener
+        scene.events.on(Scenes.Events.UPDATE, update);
+        scene.events.once(Scenes.Events.SHUTDOWN, stop);
+    }
+
+    private nuke() {
+        const scene = this.scene!;
+        scene.cameras.main.flash(350, 255, 255, 255);
+        scene.cameras.main.shake(400, 0.03);
+
+        (this._enemyBullets.getMatching('active', true) as Bullet[]).forEach(bullet => bullet.disable());
+        this.activeEnemies().forEach(enemy => {
+            const health = enemy.getComponent(Health);
+            health?.damage(health.current);
+        });
+        (this._bosses.getMatching('active', true) as Boss[])
+            .forEach(boss => boss.getComponent(Health)?.damage(EntityManager.NUKE_BOSS_DAMAGE));
+
+        const ring = scene.add.circle(this._player.x, this._player.y, EntityManager.NUKE_RING_RADIUS)
+            .setStrokeStyle(30, 0xff3355, 0.9).setScale(0);
+        scene.tweens.add({
+            targets: ring, scale: 1, alpha: 0, duration: EntityManager.NUKE_RING_MS, ease: 'Quad.easeOut',
+            onComplete: () => ring.destroy()
+        });
     }
 
     private currentLevel(): number {
@@ -362,6 +502,11 @@ export default class EntityManager extends Plugins.ScenePlugin {
             const spread: number = EntityManager.BOSS_DROP_SPREAD;
             this.dropHealthPickup(boss.x + Phaser.Math.Between(-spread, spread), boss.y + Phaser.Math.Between(-spread, spread));
         }
+        // A beaten boss always drops every power-up
+        EntityManager.POWER_UPS.forEach(kind => {
+            const spread: number = EntityManager.BOSS_DROP_SPREAD;
+            this.dropPickup(boss.x + Phaser.Math.Between(-spread, spread), boss.y + Phaser.Math.Between(-spread, spread), kind);
+        });
 
         this._bossPickupTimers.forEach(timer => timer.remove());
         this._bossPickupTimers = [];

@@ -49,6 +49,18 @@ export default class Weapon implements IComponent {
         }
     }
 
+    // Fire one bullet from any point (e.g. a drone orbiting the player), using this weapon's bullet pool and data
+    public shootFrom(x: number, y: number, rotation: number) {
+        if (!this.enabled || !this._bullets)
+            return;
+
+        const bullet: Bullet = this._bullets.get() as Bullet;
+        if (bullet) {
+            const velocity: Phaser.Math.Vector2 = new Phaser.Math.Vector2(1, 0).rotate(rotation).scale(this._bulletData.speed);
+            bullet.enable(x, y, velocity.x, velocity.y, this._bulletData);
+        }
+    }
+
     private shootAt(source: Entity, rotation: number) {
         if (!this._bullets)
             return;

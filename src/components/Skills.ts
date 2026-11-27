@@ -1,6 +1,6 @@
 import IComponent from "./IComponent.ts";
 
-export type SkillId = 'shockwave' | 'shield' | 'barrier' | 'overdrive';
+export type SkillId = 'shockwave' | 'shield' | 'barrier' | 'blackHole' | 'overdrive';
 
 export type SkillState = {
     id: SkillId;
@@ -31,6 +31,7 @@ export default class Skills extends Phaser.Events.EventEmitter implements ICompo
         {id: 'shockwave', key: 'F', name: 'SHOCKWAVE', cooldownMs: 8000, killsRequired: 0, startsReady: true},
         {id: 'shield', key: 'C', name: 'SHIELD', cooldownMs: 12000, killsRequired: 0, startsReady: true},
         {id: 'barrier', key: 'A', name: 'BARRIER', cooldownMs: 20000, killsRequired: 0, startsReady: false},
+        {id: 'blackHole', key: 'E', name: 'BLACK HOLE', cooldownMs: 15000, killsRequired: 0, startsReady: true},
         {id: 'overdrive', key: 'X', name: 'OVERDRIVE', cooldownMs: 0, killsRequired: 15, startsReady: false},
     ];
 

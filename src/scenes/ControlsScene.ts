@@ -13,6 +13,7 @@ export default class ControlsScene extends Phaser.Scene {
         ['F', 'Shockwave'],
         ['C', 'Shield'],
         ['A', 'Barrier (when charged)'],
+        ['E', 'Black hole (at the mouse)'],
         ['X', 'Overdrive (charged by kills)'],
         ['ESC / P', 'Pause'],
     ];

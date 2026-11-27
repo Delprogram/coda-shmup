@@ -48,6 +48,17 @@ export default class Player extends Entity implements LaserBlocker {
     private static readonly BARRIER_COLOR: number = 0x66ffcc;
     private static readonly BARRIER_PULSE_MS: number = 300;
 
+    // Drones (pickup): small ships orbiting the player that shoot the closest enemy on their own
+    private static readonly DRONES_MS: number = 12000;
+    private static readonly DRONE_COUNT: number = 2;
+    private static readonly DRONE_ORBIT_RADIUS: number = 140;
+    private static readonly DRONE_ORBIT_SPEED: number = 0.004;
+    private static readonly DRONE_FIRE_MS: number = 300;
+    private static readonly DRONE_RANGE: number = 1500;
+    private static readonly DRONE_SCALE: number = 0.45;
+    private static readonly DRONE_TINT: number = 0x66ffcc;
+    private static readonly DRONE_SOUND_VOLUME: number = 0.15;
+
     // Nitro: hold SHIFT while moving to go faster, as long as the gauge lasts. It recharges when not used, and
     // once empty it must refill a bit before it can be used again (no on/off flicker)
     private static readonly NITRO_MAX_MS: number = 3000;
@@ -109,6 +120,10 @@ export default class Player extends Entity implements LaserBlocker {
     private _barrier: Phaser.GameObjects.Arc;
     private _barrierUntil: number = 0;
     private _enemyBullets: () => Bullet[] = () => [];
+    private _drones: Phaser.GameObjects.Image[] = [];
+    private _dronesUntil: number = 0;
+    private _droneOrbitAngle: number = 0;
+    private _lastDroneShotTime: number = 0;
     private _nitroKey: Input.Keyboard.Key | null = null;
     private _nitroMs: number = Player.NITRO_MAX_MS;
     private _isNitroActive: boolean = false;
@@ -144,6 +159,7 @@ export default class Player extends Entity implements LaserBlocker {
             this.scene.input.keyboard.addKey(KeyCodes.F).on('down', () => useSkill('shockwave'));
             this.scene.input.keyboard.addKey(KeyCodes.C).on('down', () => useSkill('shield'));
             this.scene.input.keyboard.addKey(KeyCodes.A).on('down', () => useSkill('barrier'));
+            this.scene.input.keyboard.addKey(KeyCodes.E).on('down', () => useSkill('blackHole'));
             this._nitroKey = this.scene.input.keyboard.addKey(KeyCodes.SHIFT);
             this.scene.input.keyboard.addKey(KeyCodes.X).on('down', () => useSkill('overdrive'));
 
@@ -165,6 +181,9 @@ export default class Player extends Entity implements LaserBlocker {
 
         this._deflector = this.scene.add.rectangle(this.x, this.y, Player.DEFLECTOR_THICKNESS, Player.DEFLECTOR_LENGTH,
             Player.DEFLECTOR_COLOR, 0.85).setStrokeStyle(4, 0xffffff, 0.9).setVisible(false);
+        this._drones = Array.from({length: Player.DRONE_COUNT}, () =>
+            this.scene.add.image(this.x, this.y, 'sprites', 'playerShip3_blue')
+                .setScale(Player.DRONE_SCALE).setTint(Player.DRONE_TINT).setVisible(false));
         this._nitroFlames = this.scene.add.particles(0, 0, 'sprites', {
             frame: ['star1', 'star2'],
             // Read at each emission, so the flames always point behind the ship
@@ -224,6 +243,8 @@ export default class Player extends Entity implements LaserBlocker {
             this._shieldBubble?.setVisible(false);
             this._barrierUntil = 0;
             this._barrier.setVisible(false);
+            this._dronesUntil = 0;
+            this._drones.forEach(drone => drone.setVisible(false));
             this._nitroFlames.stop();
             this._nitroCore.stop();
             this._laserGunUntil = 0;
@@ -301,9 +322,54 @@ export default class Player extends Entity implements LaserBlocker {
         this._deflector.setAlpha(blinkOff ? 0.3 : 1);
     }
 
-    // What the laser gun can hit and what the barrier destroys, given by the EntityManager which owns the groups
+    // What the laser gun and the drones can hit and what the barrier destroys, given by the EntityManager which owns the groups
     public setLaserTargets(targets: () => Entity[]) {
         this._laserTargets = targets;
+    }
+
+    public activateDrones() {
+        this._dronesUntil = this.scene.time.now + Player.DRONES_MS;
+    }
+
+    private updateDrones(now: number, deltaTime: number) {
+        const isActive: boolean = now < this._dronesUntil;
+        this._drones.forEach(drone => drone.setVisible(isActive));
+        if (!isActive)
+            return;
+
+        this._droneOrbitAngle += Player.DRONE_ORBIT_SPEED * deltaTime;
+        const canShoot: boolean = now - this._lastDroneShotTime > Player.DRONE_FIRE_MS;
+        if (canShoot)
+            this._lastDroneShotTime = now;
+
+        this._drones.forEach((drone, i) => {
+            const orbit = new Phaser.Math.Vector2().setToPolar(
+                this._droneOrbitAngle + Phaser.Math.PI2 * i / this._drones.length, Player.DRONE_ORBIT_RADIUS);
+            drone.setPosition(this.x + orbit.x, this.y + orbit.y);
+
+            const target = this.closestEnemy(drone.x, drone.y, Player.DRONE_RANGE);
+            if (!target)
+                return;
+
+            drone.setRotation(Phaser.Math.Angle.Between(drone.x, drone.y, target.x, target.y));
+            if (canShoot) {
+                this.getComponent(Weapon)?.shootFrom(drone.x, drone.y, drone.rotation);
+                this.scene.sound.play('sfx_laser1', {volume: Player.DRONE_SOUND_VOLUME});
+            }
+        });
+    }
+
+    private closestEnemy(x: number, y: number, range: number): Entity | null {
+        let closest: Entity | null = null;
+        let closestDistance: number = range;
+        for (const enemy of this._laserTargets()) {
+            const distance: number = Phaser.Math.Distance.Between(x, y, enemy.x, enemy.y);
+            if (distance < closestDistance) {
+                closest = enemy;
+                closestDistance = distance;
+            }
+        }
+        return closest;
     }
 
     public setEnemyBullets(bullets: () => Bullet[]) {
@@ -454,6 +520,7 @@ export default class Player extends Entity implements LaserBlocker {
         this._shieldBubble?.setPosition(this.x, this.y);
         this.updateDeflector(now);
         this.updateBarrier(now);
+        this.updateDrones(now, deltaTime);
         this.getComponent(LaserWeapon)?.update(deltaTime);
 
         // Hold the right mouse button to fire the laser gun (only while the pickup is active)

@@ -1,34 +1,36 @@
 import Entity from './Entity.ts';
 import Movement from "../components/Movement.ts";
 
-export type PickupKind = 'health' | 'laserShield' | 'laserGun';
+export type PickupKind = 'health' | 'laserShield' | 'laserGun' | 'drones' | 'nuke';
 
 type PickupStyle = {
     frame: string;
     tint: number;
+    scale: number;
     fallSpeed: number;
     // 0 = stays until it leaves the screen or is picked up
     lifetimeMs: number;
 };
 
-// Item the player picks up on contact: health (dropped by enemies), or a laser shield / laser gun (only during
-// laser boss fights)
+// Item the player picks up on contact: health, drones and nuke (dropped by enemies and bosses), or a laser shield /
+// laser gun (only during laser boss fights)
 export default class Pickup extends Entity {
     public static readonly HEAL_AMOUNT: number = 2;
-    private static readonly BASE_SCALE: number = 2;
-    private static readonly PULSE_SCALE: number = 2.5;
+    private static readonly PULSE_FACTOR: number = 1.25;
     private static readonly PULSE_MS: number = 350;
     // Blink during the last part of its life to warn that it is about to vanish
     private static readonly EXPIRE_WARNING_MS: number = 2000;
     private static readonly BLINK_MS: number = 120;
 
     private static readonly STYLES: Record<PickupKind, PickupStyle> = {
-        health: {frame: 'playerLife1_blue', tint: 0x5bd75b, fallSpeed: 0.25, lifetimeMs: 0},
-        laserShield: {frame: 'star2', tint: 0x66ccff, fallSpeed: 0, lifetimeMs: 9000},
-        laserGun: {frame: 'star3', tint: 0xff66ff, fallSpeed: 0, lifetimeMs: 7000},
+        health: {frame: 'playerLife1_blue', tint: 0x5bd75b, scale: 2, fallSpeed: 0.25, lifetimeMs: 0},
+        laserShield: {frame: 'star2', tint: 0x66ccff, scale: 2, fallSpeed: 0, lifetimeMs: 9000},
+        laserGun: {frame: 'star3', tint: 0xff66ff, scale: 2, fallSpeed: 0, lifetimeMs: 7000},
+        drones: {frame: 'playerShip3_blue', tint: 0x66ffcc, scale: 0.8, fallSpeed: 0.15, lifetimeMs: 10000},
+        nuke: {frame: 'star1', tint: 0xff3355, scale: 2.6, fallSpeed: 0.15, lifetimeMs: 10000},
     };
 
-    private _pulse: Phaser.Tweens.Tween;
+    private _pulse: Phaser.Tweens.Tween | null = null;
     private _kind: PickupKind = 'health';
     private _expireTime: number = 0;
 
@@ -38,15 +40,6 @@ export default class Pickup extends Entity {
 
     public init() {
         this.addComponent(new Movement());
-
-        this._pulse = this.scene.tweens.add({
-            targets: this,
-            scale: {from: Pickup.BASE_SCALE, to: Pickup.PULSE_SCALE},
-            duration: Pickup.PULSE_MS,
-            yoyo: true,
-            repeat: -1,
-            paused: true
-        });
     }
 
     public enable(x: number, y: number, kind: PickupKind) {
@@ -59,12 +52,20 @@ export default class Pickup extends Entity {
         this.getComponent(Movement)?.setSpeed(style.fallSpeed);
 
         this.enableBody(true, x, y, true, true);
-        this.setScale(Pickup.BASE_SCALE);
-        this._pulse.restart();
+        this.setScale(style.scale);
+        // Each kind has its own size, so the pulse is created again for the new one
+        this._pulse?.remove();
+        this._pulse = this.scene.tweens.add({
+            targets: this,
+            scale: {from: style.scale, to: style.scale * Pickup.PULSE_FACTOR},
+            duration: Pickup.PULSE_MS,
+            yoyo: true,
+            repeat: -1
+        });
     }
 
     public disable() {
-        this._pulse.pause();
+        this._pulse?.pause();
         this.disableBody(true, true);
     }
 

@@ -29,6 +29,12 @@ export default class SineMovement implements IComponent {
         this._elapsedMs = 0;
     }
 
+    // Push the wave center (e.g. pulled by a black hole): the entity follows on the next move()
+    public offsetCenter(dx: number, dy: number) {
+        this._center.x += dx;
+        this._center.y += dy;
+    }
+
     // speedMultiplier scales the JSON speed; with a target, the wave turns toward it by at most turnSpeed rad/ms
     public move(entity: Entity, deltaTime: number, speedMultiplier: number = 1,
                 target: Entity | null = null, turnSpeed: number = 0) {
